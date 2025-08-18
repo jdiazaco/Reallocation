@@ -1,0 +1,2651 @@
+// version with inputed prices AND inputed PRICE GROWTHS - > IMPUTATION WENT WRONG TRY HERE MEAN
+// Last Change 09.01.17: add string of pe_13 + measurement unit in calculation of firm price
+// Last Change 18.01.17: Refined the weighting scheme in FirmP there was a mistake leading to senseless high prices
+// last Change 28.07.17: fix east west graph and changed deflator for WOP ! ! ! ! ! ! 
+// This version replacement of FirmP is outcommeted !!!!!!!!!!!
+// but with the new identifier ( see last Change)
+// 27.09.2017 included WVquant
+
+/*
+This do-file encompasses all data preparation. This means:
+1. Generate a fake-file when necessary
+2. Transform the GP-codes into the GP02 (by looking at the product portfolio before and after the change and checking with the concordance)
+3. Purges firm-years with missing data, data which does not take legitimate values (GP codes which are to short etc) and other such problems
+4. Calculate a revenue price index for each product, each firm and each firm without each single product
+5. Calculates the pressure from foreign trade for each product category
+6. Builds an average pressure over all products for each individual firm
+7. Generates measures of firm proximity (industry codes), which bridge the various GP and WZ-schemes
+8. Generates a Capital stock using the perpetual inventory method. The first capital stock is approximated with depreciations
+9. Calculates weights for each firm according to the weightening scheme of the kse
+10. Calculates deflated revenue, labor and intermediate inputs and other variables for the production function
+
+
+*/
+
+
+
+//----------------------------------\\
+//----Transform GPs into GP 2002----\\ 
+//**********************************\\
+{
+if "$Transform_GP" == "YES" {
+
+
+//generate flags to indicate the GP-system used
+if  "$IWH_run" == "YES"  {
+use land_b bnr jahr if  jahr >= $start_year_load  & $end_year_load >= jahr using "$savepath\startfile_fake_GP",clear
+duplicates drop
+}
+
+if "$Fernrechnen" == "YES"  |  "$Wissens_Arbeitspl" == "YES"  {
+use bnr jahr land_b if jahr >= $start_year_load  & $end_year_load >= jahr using "$Firmendaten", clear
+}
+
+drop if bnr==.
+
+
+gen flag_GP_1995 = 1 if (jahr <2002 & land_b != 13) | (jahr <2001 & land_b==13)
+replace flag_GP_1995 = 0 if flag_GP_1995==.
+gen flag_GP_2002 = 1 if (jahr >= 2002 & jahr <2009) | (jahr ==2001 & land_b==13)
+replace flag_GP_2002 = 0 if flag_GP_2002==.
+gen flag_GP_2009 = 1 if jahr >= 2009
+replace flag_GP_2009 = 0 if flag_GP_2009==.
+
+quietly xtset bnr jahr
+gen flag_new_GP = 1 if flag_GP_2002 == 1 & l.flag_GP_1995 == 1
+replace flag_new_GP = 1 if flag_GP_2009 == 1 & l.flag_GP_2002 == 1
+replace flag_new_GP = 0 if flag_new_GP == . 
+
+gen flag_old_GP = 1 if f.flag_GP_2002 == 1 & flag_GP_1995 == 1
+replace flag_old_GP = 1 if f.flag_GP_2009 == 1 & flag_GP_2002 == 1
+replace flag_old_GP = 0 if flag_old_GP == . 
+
+
+gen flag_switch_group02 = 1 if (flag_GP_2002 == 1 & l.flag_GP_1995 == 1) | (f.flag_GP_2002 == 1 & flag_GP_1995 == 1)
+gen flag_switch_group09 = 1 if (flag_GP_2009 == 1 & l.flag_GP_2002 == 1) | (f.flag_GP_2009 == 1 & flag_GP_2002 == 1)
+
+keep jahr bnr flag_switch_group02 flag_switch_group09 flag_new_GP flag_old_GP flag_GP_1995 flag_GP_2002 flag_GP_2009
+
+tab jahr, su (flag_switch_group02)
+tab jahr, su (flag_switch_group09)
+tab jahr, su (flag_new_GP)
+tab jahr, su (flag_old_GP)
+
+tab jahr, su (flag_GP_1995)
+tab jahr, su (flag_GP_2002)
+tab jahr, su (flag_GP_2009)
+
+compress jahr bnr flag_switch_group02 flag_switch_group09 flag_new_GP flag_old_GP flag_GP_1995 flag_GP_2002 flag_GP_2009
+
+save "$savepath\GP-flags", replace
+
+drop flag_new_GP flag_old_GP
+
+rename flag_GP_1995 flag_GP95
+rename flag_GP_2002 flag_GP02
+rename flag_GP_2009 flag_GP09
+
+save "$savepath\GP-flags_program_switch_GPs", replace
+
+
+//-------------------------------------------------------------------------------------------------------\\
+//-------------------------------- constructing the file---------------------------------\\
+//-------------------------------------------------------------------------------------------------------\\
+
+
+if  "$IWH_run" == "YES"  {
+use land_b pe_10 pe_13 pe_14 pe_15 pe_16 pe_19 pe_24 pe_21 pe_26 pe_29 pe_20 pe_25 pe_30 bnr unr jahr if jahr >= $start_year_load & jahr <= $end_year_load using "$savepath\startfile_fake_GP",clear
+duplicates drop
+drop if bnr ==.
+}
+if "$Wissens_Arbeitspl" == "YES" | "$Fernrechnen" == "YES" {
+use unr bnr jahr land_b pe_10 if jahr >= $start_year_load & jahr <= $end_year_load using "$Firmendaten", clear
+count
+drop if bnr == . 
+duplicates drop
+merge 1:m jahr unr bnr using "$Produktdaten", keepusing(pe_13 pe_14 pe_15 pe_16 pe_19 pe_24 pe_21 pe_26 pe_29 pe_20 pe_25 pe_30 bnr unr jahr)
+keep if jahr >= $start_year_load & jahr <= $end_year_load 
+tab _merge
+drop if _merge != 3
+drop _merge
+duplicates drop
+drop if bnr ==.
+}
+
+tab jahr
+
+
+
+
+
+**************************************************************
+*--------------------Construct final_gp02--------------------*
+**************************************************************
+{
+
+
+/*
+// Very first step. Reclassify GP09V2 to GP09. This is an umambigous reclassification and we can use official concordance tables to do so.
+if "$adjust_GP09V2" == "YES"  {
+gen GP09V2 = substr(pe_13,1,9) if jahr >=2012 
+gen last_dig_GP09V2 = substr(pe_13,10,1) if jahr >=2012 
+merge m:1 GP09V2 using "$savepath\Concordances\Konkordanz GP09V2 to GP09.dta"
+drop if _merge ==2
+replace GP09 = GP09V2 if _merge ==1 & jahr >=2012   // no concordance, hence here gp09V2 is ten digit already
+count if length(pe_13) != 10
+replace pe_13 = GP09 + last_dig_GP09V2  if jahr >=2012 
+count if length(pe_13) != 10
+
+ 
+drop GP09 last_dig_GP09V2 GP09V2 _merge
+}
+*/
+
+
+
+
+start_diagnosis pe_15
+
+switch_GPs pe_13 GP95 GP02 bnr target1
+switch_GPs pe_13 GP09 GP02 bnr target2
+
+count if target1 != target2 & target1 !="" & target2 !=""
+
+gen final_gp02 = target1 if target1 !=""
+replace final_gp02 = target2 if target2 !="" & final_gp02 ==""
+
+gen marker_GP95 = 1 if substr(final_gp02,1,2) == "95"
+replace marker_GP95 = 0 if marker_GP95 != 1
+
+gen marker_GP02 = 1 if substr(final_gp02,1,2) == "02"
+replace marker_GP02 = 0 if marker_GP02 != 1
+
+gen marker_GP09 = 1 if substr(final_gp02,1,2) == "09"
+replace marker_GP09 = 0 if marker_GP09 != 1
+
+tab jahr, sum(marker_GP95)
+tab jahr, sum(marker_GP02)
+tab jahr, sum(marker_GP09)
+
+drop marker_GP95 marker_GP02 marker_GP09
+
+//thus far, we have a final_gp02 consisting of the classification (first two digits, either 95,02 or 09)
+//abd the 10 digit product codes. Should by a twelve digit number.
+//However, potentially, these final_gps still have different measurement units. Therefore, we will now
+//pick the measurement unit that captures the largest portion of each final_gp
+
+//the following bracket contains this routine
+{
+
+
+	//first, we save all the different values of the three variables giving measurement units in a global
+	//each of these values stands for a distinct measurement unit
+	levelsof pe_16 
+	global different_measurement_units = "`r(levels)'"
+	levelsof pe_21
+	global different_measurement_units = "$different_measurement_units `r(levels)'"
+	levelsof pe_26
+	global different_measurement_units = "$different_measurement_units `r(levels)'"
+	
+	
+	//second, we eliminate all one digit measurement_units from the list (because they are illegitimate
+	//and cause problems with the elimination of duplicates further down
+	local temporary_list = "$different_measurement_units"
+	global different_measurement_units = ""
+	foreach entry in `temporary_list' {
+	if length("`entry'") >= 2 {
+	global different_measurement_units = "$different_measurement_units `entry'"
+	}
+	}
+	
+	
+	
+	//third, we eliminate duplicates from this global (same routine as in many programs)
+	//We will also eliminate 98 and 9800, which signify Euros as measurement unit
+	local unique_list = "$different_measurement_units"
+	foreach argument in `unique_list' {
+	local unique_list = subinstr("`unique_list'", "`argument' ", "  ", .)
+	local unique_list = subinstr("`unique_list'", " `argument'", "  ", .)
+	local unique_list = "`unique_list' `argument'"
+	}
+	global different_measurement_units = "`unique_list'"
+	global different_measurement_units = subinstr("$different_measurement_units", "98", "  ", .)
+	global different_measurement_units = subinstr("$different_measurement_units", "9800", "  ", .)
+	
+	
+	//fourth, we generate a marker for each measurement units: It is 1 if this observation has 
+	//quantity data in this measurement unit, 0 otherwise
+	foreach measurement_unit in $different_measurement_units{
+	gen marker_`measurement_unit' = 1 if (pe_16 == `measurement_unit' & pe_19 !=0) | (pe_21 == `measurement_unit' & pe_24 !=0) | (pe_26 == `measurement_unit' & pe_29 !=0)
+	replace marker_`measurement_unit' = 0 if marker_`measurement_unit'==.
+	}
+	
+	
+	
+	
+	//in a last step, we pick the measurement unit. This has to be done iteratively: 
+	//we first pick the measurement unit which allows us to have the most observations
+	//per final_gp02
+	//however, among the remaining observations, we have to assign a measurement unit as well. 
+	//thus, we will do a while loop that cycles through assignement steps as long as there 
+	//are still observations with quantity data but without a measurement unit.
+	gen marker_unit_assigned = 0
+	gen measurement_unit =""
+	local obs_without_unit_but_data = 1
+	
+	
+	while `obs_without_unit_but_data' > 0 {
+	
+			
+			
+			*1st, we sort all obs with the same final_gp02 and still missing measurement_unit into a group
+			//then we count how often each measurement unit actually occurs within that group
+			sort final_gp02 marker_unit_assigned
+			foreach measurement_unit in $different_measurement_units {
+			by final_gp02 marker_unit_assigned: egen count_`measurement_unit' = total( marker_`measurement_unit') if marker_unit_assigned ==0
+			}
+	
+	
+	
+			*2nd, we select the measurement unit which most observations have and set it as measurement unit for the entire group.
+			egen max_num_of_obs_per_unit = rowmax( count_* )
+			foreach measurement_unit in $different_measurement_units {
+			replace measurement_unit = "`measurement_unit'" if count_`measurement_unit' == max_num_of_obs_per_unit & marker_`measurement_unit' == 1 & measurement_unit==""
+			}
+	
+	
+			*3rd we do some housecleaning to keep the loop going: 
+			//tabulate how many measurement units we have, mark observations with a measurement unit
+			//count how many observations still have to be found
+			replace marker_unit_assigned = 1 if measurement_unit !=""
+			tab jahr, su (marker_unit_assigned)
+			count if max_num_of_obs_per_unit > 0 & marker_unit_assigned == 0
+			local obs_without_unit_but_data = `r(N)'
+			drop count_* max_num_of_obs_per_unit
+			
+			
+	}
+	
+	//if there is no quantity data, replace the variable as missing
+	//count the number of empty measurement units
+	count if measurement_unit == ""
+	//count the number of empty measurement units that also have no quantity data (mus be equal)
+	count if measurement_unit == "" & (pe_19 ==.|pe_19 ==0) & (pe_24==.|pe_24==0) & (pe_29 ==.|pe_29==0)
+	//count the obs with empty quantity data but a measurement unit (should be 0)
+	count if (pe_19 ==.|pe_19 ==0) & (pe_24==.|pe_24==0) & (pe_29 ==.|pe_29==0) & measurement_unit != ""
+	replace measurement_unit = "no" if measurement_unit == ""
+	
+	//drop the helpvars for the loop
+	drop marker_*
+
+//close the measurement unit routine
+}
+
+//After finding out the measurement unit, attach it to the final_gp
+replace final_gp02 = final_gp02 + measurement_unit
+
+
+
+//This part gathers information on the wz category in a new variable
+gen wz02_4digit = target1_4digit if flag_GP95 == 1
+gen wz02_3digit = target1_3digit if flag_GP95 == 1
+gen wz02_2digit = target1_2digit if flag_GP95 == 1
+
+replace wz02_4digit = target2_4digit if flag_GP95 != 1
+replace wz02_3digit = target2_3digit if flag_GP95 != 1
+replace wz02_2digit = target2_2digit if flag_GP95 != 1
+
+
+
+//diagnose the severity of the problem of unclear wz-s:
+//----------------------------------------------------
+
+	//wz 4 digit
+	gen marker_unclear = 1 if wz02_4digit == "unclear"
+	replace marker_unclear = 0 if marker_unclear == .
+	tab jahr, sum(marker_unclear)
+	drop marker_unclear
+	
+	//wz 3 digit
+	gen marker_unclear = 1 if wz02_3digit == "unclear"
+	replace marker_unclear = 0 if marker_unclear == .
+	tab jahr, sum(marker_unclear)
+	drop marker_unclear
+	
+	//wz 2 digit
+	gen marker_unclear = 1 if wz02_2digit == "unclear"
+	replace marker_unclear = 0 if marker_unclear == .
+	tab jahr, sum(marker_unclear)
+	drop marker_unclear
+	
+	
+drop target*
+}
+
+**************************************************************
+*---------Construct final_gp09 (and industry info)-----------*
+**************************************************************
+{
+
+set more off
+switch_GPs final_gp02 GP02 GP09 bnr target1
+switch_GPs final_gp02 GP95 GP09 bnr target2
+
+count if target1 != target2 & target1 !="" & target2 !="" & jahr < 2009
+count if measurement_unit ==""
+gen final_gp09 = "09" + pe_13 + measurement_unit if jahr > 2008
+replace final_gp09 = target1 + measurement_unit if target1 !="" 
+replace final_gp09 = target2 + measurement_unit if target2 !="" 
+
+gen wz08_4digit = substr(final_gp09, 3, 4) if jahr > 2008
+gen wz08_3digit = substr(final_gp09, 3, 3) if jahr > 2008
+gen wz08_2digit = substr(final_gp09, 3, 2) if jahr > 2008
+
+replace wz08_4digit = target1_4digit if flag_GP02 == 1 & wz08_4digit==""
+replace wz08_3digit = target1_3digit if flag_GP02 == 1 & wz08_3digit==""
+replace wz08_2digit = target1_2digit if flag_GP02 == 1 & wz08_2digit==""
+
+replace wz08_4digit = target2_4digit if flag_GP95  == 1 & wz08_4digit==""
+replace wz08_3digit = target2_3digit if flag_GP95  == 1 & wz08_3digit==""
+replace wz08_2digit = target2_2digit if flag_GP95  == 1 & wz08_2digit==""
+
+
+//diagnose the severity of the problem of unclear wz-s:
+//----------------------------------------------------
+
+	//wz 4 digit
+	gen marker_unclear = 1 if wz08_4digit == "unclear"
+	replace marker_unclear = 0 if marker_unclear == .
+	tab jahr, sum(marker_unclear)
+	drop marker_unclear
+	
+	//wz 3 digit
+	gen marker_unclear = 1 if wz08_3digit == "unclear"
+	replace marker_unclear = 0 if marker_unclear == .
+	tab jahr, sum(marker_unclear)
+	drop marker_unclear
+	
+	//wz 2 digit
+	gen marker_unclear = 1 if wz08_2digit == "unclear"
+	replace marker_unclear = 0 if marker_unclear == .
+	tab jahr, sum(marker_unclear)
+	drop marker_unclear
+
+
+//tabulate the success in assigning a wz2 per year and switch step
+gen marker_success = 1 if wz08_2digit != "unclear"
+replace marker_success = 0 if marker_success ==.
+
+tab jahr, su (marker_success)
+su marker_success if flag_GP95 ==1
+su marker_success if flag_GP02 ==1
+
+drop marker_success
+
+drop target*
+}
+//
+
+
+**************************************************************
+*--------gen p & q & market sizes, clean up and save---------*
+**************************************************************
+//merge with data on which pe_13 is reported in which classification
+
+	//dropping the variables with the GP-flags (since they can be from final_gp or from original data
+	//this ambiguity makes it unclear what they are really saying, which depends on the last switch_GP command
+	foreach necessary_vars in flag_switch_group02 flag_switch_group09 flag_GP95 flag_GP02 flag_GP09 {
+		capture drop `necessary_vars'
+		}
+	merge m:1 bnr jahr using "$savepath\GP-flags"
+	drop if _merge == 2
+	drop _merge
+
+//generate Q and p
+	tostring (pe_16), replace
+	tostring (pe_21), replace
+	tostring (pe_26), replace
+	gen Q = pe_19 if pe_16 == measurement_unit & pe_16 !=""
+	replace Q = pe_24 if pe_21 == measurement_unit & pe_21 !=""
+	replace Q = pe_29 if pe_26 == measurement_unit & pe_26 !=""
+	
+	gen WVquant = pe_20 if pe_16 == measurement_unit & pe_16 !=""
+	replace WVquant = pe_25 if pe_21 == measurement_unit & pe_21 !=""
+	replace WVquant = pe_30 if pe_26 == measurement_unit & pe_26 !=""
+
+	
+//control whether there are quantities without measurement units or vice versa (expect two "0")
+	count if measurement_unit !="no" & (Q ==. | Q ==0)
+	count if measurement_unit =="no" & (Q !=. & Q !=0)
+	drop pe_16 pe_19 pe_21 pe_24 pe_26 pe_29
+	gen p = pe_15/Q
+	gen mark_price = 1 if p !=.
+	replace mark_price = 0 if mark_price != 1
+	
+
+	
+////////////////////////////
+	///////////we saved a test-file here
+////////////////////////////
+
+	
+	
+	
+// drop firm with unbelievably high price deviations from the industry average
+// we assume that this is measurement error. We know, e.g., that some firms have a jump of 1000 => they go from kg to tons though it's not allowed
+	// IMPORTANT WE ADD MEASUREMENT UNIT TO IDENTIFIER AS SAME PE_13 HAS SOMETIMES DIFFERENT MEASUREMENTUNIT
+	// WE ALSO NEED A STRING FOR THIS TO CORRECTLY AGGREGATE PRICES BY THIS STRING
+	
+	
+	gen ident_pe13_measure_unit =  pe_13 +  measurement_unit
+	egen help_id = group (ident_pe13_measure_unit bnr  flag_GP_1995 flag_GP_2002 flag_GP_2009)   // before without measurement_unit
+	xtset help_id jahr
+	
+	
+	
+	gen price_growth = p/l.p
+	bys ident_pe13_measure_unit  flag_GP_1995 flag_GP_2002 flag_GP_2009: egen industry_price = mean(p)
+	by ident_pe13_measure_unit  flag_GP_1995 flag_GP_2002 flag_GP_2009: egen N = total(mark_price)
+	drop mark_price
+	
+	
+	//test in which we eliminate observations that greatly influence the aggregate index => extreme values
+	gen industry_price_without_obs = (industry_price - 1/N * p) * N/(N-1) if N > 1
+	gen test_influence = p / industry_price_without_obs
+
+	// decide how much prices are dropped due to missreporting
+	if "$less_price_dropping" != "YES" {
+	_pctile test_influence , nq(100)
+	gen OK_test_influence = inrange(test_influence, `r(r1)', `r(r99)') if . != test_influence
+	}
+	
+	if "$less_price_dropping" == "YES" {
+	_pctile test_influence , nq(1000)
+	gen OK_test_influence = inrange(test_influence, `r(r1)', `r(r999)') if . != test_influence
+	}
+
+	
+	// summarize and show implausible high derivation from product price mean 
+	su test_influence
+	cap noisily kdensity test_influence if OK_test_influence == 1
+	cap noisily graph export "$savepath\Freigabe\Descriptive\Ratio_Price_to_avg_product_price_valid_obs.emf", replace
+	su test_influence if OK_test_influence == 1 , det
+	cap noisily kdensity test_influence if OK_test_influence == 0
+	cap noisily graph export "$savepath\Freigabe\Descriptive\Ratio_Price_to_avg_product_price_invalid_obs.emf", replace
+	su test_influence if OK_test_influence == 0 , det
+	
+	gen marker_reporting_error = 1 if OK_test_influence == 0 //choose between OK_test_influence marker_extreme
+
+	replace p = . if marker_reporting_error == 1
+	replace Q = . if marker_reporting_error == 1
+	
+	su test_influence if marker_reporting_error != 1
+	kdensity test_influence if marker_reporting_error != 1
+	
+	drop help_id price_growth industry_price N industry_price_without_obs test_influence marker_reporting_error
+	
+	
+	
+
+	
+//count whether there are prices without measurement units or vice versa (expect two "0")
+	count if p ==. & measurement_unit !="no"
+	count if p !=. & measurement_unit =="no"
+	replace measurement_unit = "no" if p ==. & measurement_unit !="no"
+
+
+
+//to compute the market shares correctly in the firm price computation, we should only use observations were there is a price
+//hence, we create a flag for this
+	gen flag_quantity_exists = 1 if p != . & Q != . 
+	replace flag_quantity_exists = 0 if flag_quantity_exists == .
+	
+
+//
+//generate market sizes for use further down
+
+	bys ident_pe13_measure_unit jahr: egen market_size_GP10 = total(pe_15)
+	by ident_pe13_measure_unit jahr : egen market_size_GP10_for_price = total(pe_15 * flag_quantity_exists)
+	
+	
+	bys ident_pe13_measure_unit unr jahr : egen Q_GP10 = total(Q) 
+	bys ident_pe13_measure_unit bnr jahr : egen Q_GP10_bnr = total(Q) 
+	
+	bys ident_pe13_measure_unit jahr : egen Market_size_Q =  total(Q)
+
+
+	
+//generate firm-product specific market shares and prices
+	bys ident_pe13_measure_unit unr jahr: egen AbsatzGP10 = total(pe_15)
+	by ident_pe13_measure_unit unr jahr : egen AbsatzGP10_if_quantity_exists = total(pe_15* flag_quantity_exists) 
+	
+	bys ident_pe13_measure_unit bnr jahr: egen AbsatzGP10_bnr = total(pe_15)
+	by ident_pe13_measure_unit bnr jahr : egen AbsatzGP10_if_quantity_exists_b = total(pe_15* flag_quantity_exists) 
+	
+	
+	gen P_com = ((AbsatzGP10_if_quantity_exists/Q_GP10)/(market_size_GP10_for_price/Market_size_Q))
+	gen P_P = (AbsatzGP10_if_quantity_exists/Q_GP10)
+	
+	
+	
+	gen P_com_bnr = ((AbsatzGP10_if_quantity_exists_b/Q_GP10_bnr)/(market_size_GP10_for_price/Market_size_Q))
+	gen P_P_bnr = (AbsatzGP10_if_quantity_exists_b/Q_GP10_bnr)
+	
+	
+	
+// define a new revenue weight
+gen market_price = market_size_GP10_for_price/Market_size_Q
+gen market_price_revenue =  Q*market_price
+
+gen TEST_diff_rev_market_rev = pe_15/market_price_revenue if  flag_quantity_exists == 1
+
+su TEST_diff_rev_market_rev, det
+kdensity TEST_diff_rev_market_rev 
+graph export "$savepath\Freigabe\Priceindices\kdensity_TEST_diff_rev_market_rev.pdf", replace
+drop TEST_diff_rev_market_rev market_price
+
+
+
+
+ 
+	
+//generate market shares for each pe_13
+	gen ms_p = AbsatzGP10 / market_size_GP10
+	gen ms_pq = Q_GP10 / Market_size_Q
+
+	gen ms_p_bnr = AbsatzGP10_bnr / market_size_GP10
+	gen ms_pq_bnr = Q_GP10_bnr / Market_size_Q
+	
+	
+
+bys unr jahr: egen Absatzproduktionswert_unr = total(pe_15)
+by unr jahr: egen Absatzprod_unr_Quan = total(pe_15 * flag_quantity_exists)
+by unr jahr: egen Absatzprod_unr_Quan_market = total(market_price_revenue * flag_quantity_exists)
+	
+	// gen variables of market shares 
+by unr jahr: egen ms_f = total(ms_p * pe_15/Absatzproduktionswert_unr)
+ 
+by unr jahr: egen ms_Qf = total(ms_pq * flag_quantity_exists * pe_15/Absatzprod_unr_Quan)
+
+// gen more additional control / state  variables for productivity 
+// Output firm price
+by unr jahr: egen FirmP = total(P_com * flag_quantity_exists * pe_15/Absatzprod_unr_Quan)
+by unr jahr: egen Firmp = total(P_P * flag_quantity_exists * pe_15/Absatzprod_unr_Quan)
+
+by unr jahr: egen FirmP_market = total(P_com * flag_quantity_exists * market_price_revenue/Absatzprod_unr_Quan_market)
+by unr jahr: egen Firmp_market = total(P_P * flag_quantity_exists * market_price_revenue/Absatzprod_unr_Quan_market)
+
+
+
+//bnr market shares etc  
+
+bys bnr jahr: egen Absatzproduktionswert_bnr = total(pe_15)
+by bnr jahr: egen Absatzprod_bnr_Quan = total(pe_15 * flag_quantity_exists)
+by bnr jahr: egen Absatzprod_bnr_Quan_market = total(market_price_revenue * flag_quantity_exists)
+	
+	// gen variables of market shares 
+by bnr jahr: egen ms_rev_bnr = total(ms_p_bnr * pe_15/Absatzproduktionswert_bnr)
+ 
+by bnr jahr: egen ms_q_bnr = total(ms_pq_bnr * flag_quantity_exists * pe_15/Absatzprod_bnr_Quan)
+
+// gen more additional control / state  variables for productivity 
+// Output firm price
+by bnr jahr: egen PlantP = total(P_com_bnr * flag_quantity_exists * pe_15/Absatzprod_bnr_Quan)
+by bnr jahr: egen Plantp = total(P_P_bnr * flag_quantity_exists * pe_15/Absatzprod_bnr_Quan)
+
+
+	
+	gen ms_p_within = AbsatzGP10 / Absatzproduktionswert_unr
+
+
+	gen ms_p_bnr_within = AbsatzGP10_bnr / Absatzproduktionswert_bnr
+
+	
+
+
+
+
+replace PlantP = . if PlantP == 0	
+replace Plantp = . if Plantp == 0	
+
+replace FirmP = . if FirmP == 0	
+replace Firmp = . if Firmp == 0	
+replace FirmP_market = . if FirmP_market == 0	
+replace Firmp_market = . if Firmp_market == 0	
+// su prices p com and p p 	
+su P_com, det
+su P_P, det	
+	
+// su firm prices BEFORE imputation	
+su FirmP, det
+su Firmp, det
+
+su PlantP, det
+su Plantp, det
+
+
+su FirmP_market, det
+su Firmp_market, det
+	
+gen WVquant_rev_plantP = WVquant * P_P_bnr
+
+
+bys bnr jahr: egen Tot_BNR_WVquant_rev_plantP = total(WVquant_rev_plantP) 
+
+
+
+gen RevSharePlant_WVquant_bnr = Tot_BNR_WVquant_rev_plantP/(Absatzproduktionswert_bnr + Tot_BNR_WVquant_rev_plantP)
+
+
+
+
+
+	
+bys unr jahr final_gp02: gen hlpvar = _n
+replace hlpvar = . if hlpvar !=1
+by unr jahr: egen NumP = count(hlpvar)
+drop hlpvar Absatzproduktionswert_unr AbsatzGP10_if_quantity_exists Absatzprod_unr_Quan flag_quantity_exists ident_pe13_measure_unit
+
+
+// construct number of products within BNR
+bys bnr jahr final_gp02: gen hlpvar = _n
+replace hlpvar = . if hlpvar !=1
+by bnr jahr: egen NumP_bnr = count(hlpvar)
+
+
+drop hlpvar
+
+display "Firmp PP test"
+display "-------------"
+
+
+gen test_P_P = P_P  if NumP == 1
+gen test_Firmp   = Firmp  if NumP == 1 
+
+gen test_P_com = P_com  if NumP == 1
+gen test_FirmP   = FirmP  if NumP == 1 
+
+
+
+su test_P_P, det
+su test_Firmp, det		
+	
+su test_P_com, det
+su test_FirmP, det
+
+
+
+drop  test_P_P  test_Firmp  test_P_com  test_FirmP
+
+
+
+
+
+
+merge m:1 unr bnr jahr using "$Firmendaten", keepusing(unr bnr jahr wz_u wz_b)
+drop if _merge == 2
+drop _merge 
+
+
+/*
+
+******************************************************
+// inpute firm prices for missings AFTER WZ is merged
+******************************************************
+bys jahr wz_u: egen avg_FirmP = median(FirmP)
+by jahr wz_u : egen avg_Firmp = median(Firmp)
+
+replace FirmP = avg_FirmP if FirmP ==. | FirmP ==0
+replace Firmp = avg_Firmp if Firmp ==. | Firmp ==0
+
+drop avg_FirmP avg_Firmp
+
+*******************************************************
+
+
+*/
+
+
+// su firm prices AFTER imputation	
+su FirmP, det
+su Firmp, det
+
+
+
+//close the computation, diagnose movements in revenue, compress al variables and save
+	compress _all 
+	sort bnr jahr pe_13
+	end_diagnosis pe_15
+	save "$savepath\Augmented_Product_Data_Unaggregated_Unpurged", replace
+	
+}
+}
+//
+
+
+//---------------------------------\\
+//----Purge incomplete reports-----\\
+//*********************************\\
+{
+if "$purge_incomplete_reports" =="YES" {
+
+// Dieses Kapital eliminiert alle Bobachtungen des Jahres einer gesamten Firma (inklusive Betriebe), 
+// wenn einer der Betriebe nicht lð£«¥nlos in der Produktionserhebung berichtet. 
+// Lð£«¥nlos bedeutete, dass nach dem ersten Auftauchen des Betriebes im gesamten Panel in diesem Jahr 
+// keine fehlenden Quartale auftreten.
+
+
+
+//generate data on wz_u
+use bnr pe_10 unr wz_u wz_b jahr if jahr >= $start_year_load & jahr <= $end_year_load using "$Firmendaten", clear
+
+drop if bnr ==.
+duplicates drop
+drop if unr == .
+save "$savepath\TempFile3", replace
+
+//load main data
+use if jahr >= $start_year_load & jahr <= $end_year_load using "$savepath\Augmented_Product_Data_Unaggregated_Unpurged", clear
+
+//generate "entry" data on bnr to verify reporting behaviour
+duplicates drop
+drop if bnr==.
+bys bnr: egen start_year = min(jahr)
+gen entry_bnr = 1 if jahr == start_year
+replace entry_bnr = 0 if entry_bnr ==.
+bys bnr jahr: gen n_help_bnr = _n
+egen help_ID = group(bnr n_help_bnr)
+xtset help_ID jahr
+
+gen reentry_bnr = 1 if l.start_year==. & entry_bnr !=1 & n_help_bnr ==1
+replace reentry_bnr = 0 if reentry_bnr ==.
+bys bnr jahr: egen spread_info = max(reentry_bnr)
+replace reentry_bnr = spread_info
+drop spread_info
+
+xtset  help_ID jahr
+gen exit_bnr = 1 if f.start_year == . & jahr != $end_year_load & n_help_bnr==1
+replace exit_bnr = 0 if exit_bnr ==.
+bys bnr jahr: egen spread_info = max(exit_bnr)
+replace exit_bnr = spread_info
+drop n_help_bnr spread_info start_year help_ID
+
+//generate "entry"- & reporting data on unr
+duplicates drop
+drop if unr==.
+bys unr: egen start_year = min(jahr)
+gen entry_unr = 1 if jahr == start_year
+bys unr jahr: gen n_help_unr = _n
+egen help_ID = group(n_help_unr unr)
+xtset help_ID jahr
+gen reentry_unr = 1 if l.start_year==. & entry_unr !=1 & n_help_unr ==1
+gen exit_unr = 1 if f.start_year == . & jahr != $end_year_load & n_help_unr ==1
+replace entry_unr = 0 if entry_unr ==.
+replace reentry_unr = 0 if reentry_unr ==.
+replace exit_unr = 0 if exit_unr ==.
+bys unr jahr: egen spread_info = max(reentry_unr)
+replace reentry_unr = spread_info
+drop spread_info
+by unr jahr: egen spread_info = max(exit_unr)
+replace exit_unr = spread_info
+drop n_help_unr spread_info start_year help_ID
+
+//merge with bnr entry data
+count
+sort bnr jahr
+merge m:1 unr bnr jahr using "$savepath\TempFile3"
+drop if _merge !=3
+drop _merge
+duplicates report
+duplicates drop
+duplicates report bnr final_gp02 jahr
+duplicates report bnr pe_13 jahr
+duplicates drop bnr pe_13 jahr, force
+// bspw. wegen used measurement unit 
+count if wz_u == ""
+count if wz_b == ""
+//gen industry denominator
+gen wz4_GP = substr(pe_13,1,4)
+
+
+
+//erase Temp-files
+erase "$savepath\TempFile3.dta"
+
+
+//generate quaterly reporting dummies
+forvalues count = 1/4 {
+gen meldung_Q`count' = substr(pe_10,`count',1)
+destring(meldung_Q`count'), replace
+}
+
+//generate number of quarters reported
+gen sum_meldung = meldung_Q1 +meldung_Q2+meldung_Q3+meldung_Q4
+count if sum_meldung != pe_14 
+
+//flag non-complete reporting
+gen flg_reporting_problem = 1 if pe_10 !="1111"
+
+
+replace flg_reporting_problem = 0 if flg_reporting_problem==.
+
+//allow for bnr entry during the year
+replace flg_reporting_problem =0 if meldung_Q1 != 1 & sum_meldung == 3 & entry_bnr == 1
+replace flg_reporting_problem =0 if meldung_Q1 != 1 & meldung_Q2 != 1 & sum_meldung == 2 & entry_bnr == 1
+replace flg_reporting_problem =0 if meldung_Q1 != 1 & meldung_Q2 != 1 & meldung_Q3 != 1 & sum_meldung == 1 & entry_bnr == 1
+
+
+
+//allow for bnr exit during the year
+//bnrs-resurface, meaning "exit" is just a reporting mistake, which should not be allowed in the data
+
+replace flg_reporting_problem =0 if meldung_Q4 != 1 & sum_meldung == 3 & exit_bnr == 1
+replace flg_reporting_problem =0 if meldung_Q4 != 1 & meldung_Q3 != 1 & sum_meldung == 2 & exit_bnr == 1
+replace flg_reporting_problem =0 if meldung_Q4 != 1 & meldung_Q3 != 1 & meldung_Q2 != 1 & sum_meldung == 1 & exit_bnr == 1
+
+replace flg_reporting_problem =0 if flg_reporting_problem ==.
+replace flg_reporting_problem = 1 if length(final_gp02) !=14
+
+bys unr jahr: egen flg_hlp = max(flg_reporting_problem) 
+replace flg_reporting_problem = flg_hlp
+drop flg_hlp meldung_Q1 meldung_Q2 meldung_Q3 meldung_Q4 sum_meldung 
+
+drop if flg_reporting_problem ==1
+drop flg_reporting_problem
+
+drop reentry_bnr entry_bnr exit_bnr reentry_unr entry_unr exit_unr
+//generate "entry" data on bnr
+duplicates drop
+drop if bnr==.
+bys bnr: egen start_year = min(jahr)
+gen entry_bnr = 1 if jahr == start_year
+replace entry_bnr = 0 if entry_bnr ==.
+bys bnr jahr: gen n_help_bnr = _n
+egen help_ID = group(bnr n_help_bnr)
+xtset help_ID jahr
+
+gen reentry_bnr = 1 if l.start_year==. & entry_bnr !=1 & n_help_bnr ==1
+replace reentry_bnr = 0 if reentry_bnr ==.
+bys bnr jahr: egen spread_info = max(reentry_bnr)
+replace reentry_bnr = spread_info
+drop spread_info
+drop n_help_bnr help_ID
+compress _all
+save "$savepath\Augmented_Product_Data_Unaggregated_Purged", replace
+}
+}
+//
+
+ 
+**************************************************************
+*--------aggregate final_gp02 duplicates, gen Prod_ID--------*
+**************************************************************
+{
+if "$Transform_GP" == "YES" {
+use "$savepath\Augmented_Product_Data_Unaggregated_Purged", clear
+
+display "a few data checks"
+display "*****************"
+duplicates report jahr bnr final_gp02
+duplicates report jahr unr bnr final_gp02
+
+
+
+
+
+
+start_diagnosis "pe_15 Q WVquant"
+
+aggregate_data "jahr bnr final_gp02" "Q WVquant pe_15" "P_P P_com ms_p ms_pq ms_p_bnr_within  ms_p_within  P_P_bnr P_com_bnr ms_p_bnr ms_pq_bnr " "pe_10 pe_13 pe_14" "pe_15" "land_b unr ms_rev_bnr   ms_q_bnr  Plantp   PlantP   NumP   NumP_bnr   ms_f ms_Qf FirmP Firmp FirmP_market RevSharePlant_WVquant_bnr  Firmp_market  wz_u wz_b wz02_2digit wz02_3digit wz02_4digit"
+
+end_diagnosis 
+
+
+
+// there is still a problem because on the unr level there is no unique identification because of market shares etc. 
+// solution: in production variables we aggregate to the unr level by calculating the mean values of "P_P P_com ms_p ms_pq"
+// this follows the methodology applied here 
+*RevShareMarketP_WVquant_bnr RevShareFirmP_WVquant_bnr RevShareMarketP_WVquant_unr RevShareFirmP_WVquant_unr  
+*RevRatioMarketP_WVquant_bnr   RevRatioFirmP_WVquant_bnr   RevRatioMarketP_WVquant_unr  RevRatioFirmP_WVquant_unr
+//generate an ID-variable based on bnr and final_gp02 
+egen ID_final_gp02_hlp = group(bnr final_gp02)
+xtset ID_final_gp02_hlp jahr
+by ID_final_gp02_hlp: gen n_help = _n
+replace n_help = jahr - n_help
+egen Prod_ID_variable = group(ID_final_gp02_hlp n_help)
+label variable Prod_ID_variable "An ID for each uninterrupted string of a final product code in a bnr"
+drop ID_final_gp02_hlp n_help
+
+
+save "$savepath\Augmented_Product_Data_GP_ID_Purged", replace 
+
+
+
+replace wz02_4digit = "9999" if wz02_4digit == "unclear"
+
+
+replace final_gp02 = final_gp02 + wz02_4digit
+
+aggregate_data "jahr unr final_gp02" "Q WVquant pe_15" "P_P P_com ms_p ms_pq   ms_p_within" "" "pe_15" "unr NumP ms_f ms_Qf FirmP Firmp FirmP_market  Firmp_market   wz_u wz02_2digit wz02_3digit"
+
+
+//generate an ID-variable based on bnr and final_gp02
+egen ID_final_gp02_hlp = group(unr final_gp02)
+xtset ID_final_gp02_hlp jahr
+by ID_final_gp02_hlp: gen n_help = _n
+replace n_help = jahr - n_help
+egen Prod_ID_variable = group(ID_final_gp02_hlp n_help)
+label variable Prod_ID_variable "An ID for each uninterrupted string of a final product code in a unr"
+drop ID_final_gp02_hlp n_help
+
+sort unr final_gp02 jahr
+
+compress _all
+
+save "$savepath\Augmented_Product_Data_GP_ID_Purged_UNR_lvl", replace 
+
+
+}
+}
+//
+
+
+
+//------------------------------------------\\
+//--------Generate Proximity Measures-------\\
+//******************************************\\
+{
+if "$generate_proximity_measures" == "YES" {
+ 
+
+****************************************************************************************************
+*-----------------------------------------WZ08 assignement-----------------------------------------*
+****************************************************************************************************
+use pe_15 unr bnr jahr wz* if jahr >= $start_year_prodvars & jahr <= $end_year_load using "$savepath\Augmented_Product_Data_Unaggregated_Purged", clear
+
+//Here, we decide the wz of a certain firm by looking into their product portfolio. This means summing up the revenue in each wz
+//and then selecting the wz2 in which most revenue took place, after which we look in which 3_digit wz of that wz revenue was concentrated and so on
+
+//since we generate wz_unr variables, we have to sort to use egen
+sort unr jahr
+//Here, we generate a helpvar to signify into which wz each observations' revenue belongs.
+//This just helps to speed up all the by: egen structures that are comming to summ up the revenue
+gen marker_wz_hlp =0
+
+
+		//here we generate the 2 digit WZ
+		//-------------------------------
+		levelsof wz08_2digit
+		//generate a variable which in each observation gives the amount of revenue the firm makes in all wzs
+		foreach distinct_wz in `r(levels)' {
+		replace marker_wz_hlp = 1 if "`distinct_wz'" == wz08_2digit
+		by unr jahr: egen Revenue_`distinct_wz' = total(marker_wz_hlp * pe_15)
+		replace marker_wz_hlp = 0
+		}
+		//rename the unclear revenue to use Revenue_* in the future without referring to the unclear stuff
+		rename Revenue_unclear Unclear_Revenue
+		//generate the variable reffering to the most revenue
+		gen wz_with_most_revenue = ""
+		//check each revenue to find the biggest in a single wz
+		egen most_revenue = rowmax(Revenue_*)
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = substr("`wz_revenue'", 9,.) if `wz_revenue' == most_revenue & wz_with_most_revenue ==""
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' == most_revenue & wz_with_most_revenue !="" & wz_with_most_revenue != substr("`wz_revenue'", 9,.)
+		}
+		//find whether another revenue would be bigger if the unclear revenue beloged to it
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' + Unclear_Revenue > most_revenue  & substr("`wz_revenue'", 9,.) != wz_with_most_revenue
+		}
+		drop Revenue_* Unclear_Revenue
+		gen wz_08_like_statistical = wz_with_most_revenue
+		drop wz_with_most_revenue most_revenue
+		
+		
+		
+		//here we generate the 3 digit WZ
+		//-------------------------------
+		levelsof wz08_3digit
+		//generate a variable which in each observation gives the amount of revenue the firm makes in all wzs
+		foreach distinct_wz in `r(levels)' {
+		replace marker_wz_hlp = 1 if "`distinct_wz'" == wz08_3digit & substr("`distinct_wz'",1,2) == wz_08_like_statistical
+		by unr jahr: egen Revenue_`distinct_wz' = total(marker_wz_hlp * pe_15)
+		replace marker_wz_hlp = 0
+		}
+		//rename the unclear revenue to use Revenue_* in the future without referring to the unclear stuff
+		rename Revenue_unclear Unclear_Revenue
+		//generate the variable reffering to the most revenue
+		gen wz_with_most_revenue = ""
+		//check each revenue to find the biggest in a single wz
+		egen most_revenue = rowmax(Revenue_*)
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = substr("`wz_revenue'", 9,.) if `wz_revenue' == most_revenue & wz_with_most_revenue ==""
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' == most_revenue & wz_with_most_revenue !="" & wz_with_most_revenue != substr("`wz_revenue'", 9,.)
+		}
+		//find whether another revenue would be bigger if the unclear revenue beloged to it
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' + Unclear_Revenue > most_revenue  & substr("`wz_revenue'", 9,.) != wz_with_most_revenue
+		}
+		drop Revenue_* Unclear_Revenue
+		gen wz_08_like_statistical_3digits = wz_with_most_revenue
+		drop wz_with_most_revenue most_revenue
+		
+		
+		
+		//here we generate the 4 digit WZ
+		//-------------------------------
+		levelsof wz08_4digit
+		//generate a variable which in each observation gives the amount of revenue the firm makes in all wzs
+		foreach distinct_wz in `r(levels)' {
+		replace marker_wz_hlp = 1 if "`distinct_wz'" == wz08_4digit & substr("`distinct_wz'",1,3) == wz_08_like_statistical_3digits
+		by unr jahr: egen Revenue_`distinct_wz' = total(marker_wz_hlp * pe_15)
+		replace marker_wz_hlp = 0
+		}
+		//rename the unclear revenue to use Revenue_* in the future without referring to the unclear stuff
+		rename Revenue_unclear Unclear_Revenue
+		//generate the variable reffering to the most revenue
+		gen wz_with_most_revenue = ""
+		//check each revenue to find the biggest in a single wz
+		egen most_revenue = rowmax(Revenue_*)
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = substr("`wz_revenue'", 9,.) if `wz_revenue' == most_revenue & wz_with_most_revenue ==""
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' == most_revenue & wz_with_most_revenue !="" & wz_with_most_revenue != substr("`wz_revenue'", 9,.)
+		}
+		//find whether another revenue would be bigger if the unclear revenue beloged to it
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' + Unclear_Revenue > most_revenue  & substr("`wz_revenue'", 9,.) != wz_with_most_revenue
+		}
+		drop Revenue_* Unclear_Revenue
+		gen wz_08_like_statistical_4digits = wz_with_most_revenue
+		drop wz_with_most_revenue most_revenue
+		
+
+//control whether wzs are indeed cascading down
+gen marker_problem = 0 
+replace marker_problem = 1 if wz_08_like_statistical_3digits != substr(wz_08_like_statistical_4digits,1,3) & wz_08_like_statistical_4digits  != "unclear"
+replace marker_problem = 1 if wz_08_like_statistical != substr(wz_08_like_statistical_3digits,1,2)	& wz_08_like_statistical_3digits  != "unclear"
+replace marker_problem = 1 if wz_08_like_statistical != substr(wz_08_like_statistical_4digits,1,2) & wz_08_like_statistical_4digits  != "unclear"
+quietly count if marker_problem == 1
+if `r(N)' > 0 {
+tab jahr, su(marker_problem)
+display "error: inconsistent assignement of wz08_s by the code"
+error 1
+}
+
+drop marker_problem
+
+
+//check comparability of the statistical offices' wz-measure and our own
+gen difference_our_and_stat_wz2 = 0
+replace difference_our_and_stat_wz2 = 1 if substr(wz_u,1,2) != wz_08_like_statistical
+tab jahr, su(difference_our_and_stat_wz2)
+drop difference_our_and_stat_wz2
+
+gen difference_our_and_stat_wz2 = 0
+replace difference_our_and_stat_wz2 = 1 if  substr(wz_u,1,2) != wz_08_like_statistical & wz_08_like_statistical  != "unclear" 
+tab jahr, su(difference_our_and_stat_wz2)
+drop difference_our_and_stat_wz2
+
+gen difference_our_and_stat_wz3 = 0
+replace difference_our_and_stat_wz3 = 1 if  substr(wz_u,1,3) != wz_08_like_statistical_3digits 
+tab jahr, su(difference_our_and_stat_wz3)
+drop difference_our_and_stat_wz3
+
+gen difference_our_and_stat_wz3 = 0
+replace difference_our_and_stat_wz3 = 1 if  substr(wz_u,1,3) != wz_08_like_statistical_3digits  & wz_08_like_statistical_3digits  != "unclear"
+tab jahr, su(difference_our_and_stat_wz3)
+drop difference_our_and_stat_wz3
+
+gen difference_our_and_stat_wz4 = 0
+replace difference_our_and_stat_wz4 = 1 if  wz_u != wz_08_like_statistical_4digits 
+tab jahr, su(difference_our_and_stat_wz4)
+drop difference_our_and_stat_wz4	
+		
+
+gen difference_our_and_stat_wz4 = 0
+replace difference_our_and_stat_wz4 = 1 if  wz_u != wz_08_like_statistical_4digits & wz_08_like_statistical_4digits  != "unclear"
+tab jahr, su(difference_our_and_stat_wz4)
+drop difference_our_and_stat_wz4	
+		
+		
+		
+keep unr jahr wz_08_like_statistical*
+duplicates drop
+compress _all
+save "$savepath\WZ08 assigned", replace
+		
+****************************************************************************************************
+*-----------------------------------------WZ02 assignement-----------------------------------------*
+****************************************************************************************************	
+use pe_15 unr bnr jahr wz* if jahr >= $start_year_prodvars & jahr <= $end_year_load using "$savepath\Augmented_Product_Data_Unaggregated_Purged", clear
+
+//Here, we decide the wz of a certain firm by looking into their product portfolio. This means summing up the revenue in each wz
+//and then selecting the wz2 in which most revenue took place, after which we look in which 3_digit wz of that wz revenue was concentrated and so on
+
+//since we generate wz_unr variables, we have to sort to use egen
+sort unr jahr
+//Here, we generate a helpvar to signify into which wz each observations' revenue belongs.
+//This just helps to speed up all the by: egen structures that are comming to summ up the revenue
+gen marker_wz_hlp =0
+
+
+		
+		//here we generate the 2 digit WZ
+		//-------------------------------
+		levelsof wz02_2digit
+		//generate a variable which in each observation gives the amount of revenue the firm makes in all wzs
+		foreach distinct_wz in `r(levels)' {
+		replace marker_wz_hlp = 1 if "`distinct_wz'" == wz02_2digit
+		by unr jahr: egen Revenue_`distinct_wz' = total(marker_wz_hlp * pe_15)
+		replace marker_wz_hlp = 0
+		}
+		//rename the unclear revenue to use Revenue_* in the future without referring to the unclear stuff
+		rename Revenue_unclear Unclear_Revenue
+		//generate the variable reffering to the most revenue
+		gen wz_with_most_revenue = ""
+		//check each revenue to find the biggest in a single wz
+		egen most_revenue = rowmax(Revenue_*)
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = substr("`wz_revenue'", 9,.) if `wz_revenue' == most_revenue & wz_with_most_revenue ==""
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' == most_revenue & wz_with_most_revenue !="" & wz_with_most_revenue != substr("`wz_revenue'", 9,.)
+		}
+		//find whether another revenue would be bigger if the unclear revenue beloged to it
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' + Unclear_Revenue > most_revenue  & substr("`wz_revenue'", 9,.) != wz_with_most_revenue
+		}
+		drop Revenue_* Unclear_Revenue
+		gen wz_unr_like_statistical2 = wz_with_most_revenue
+		drop wz_with_most_revenue most_revenue
+		
+		
+		//here we generate the 3 digit WZ
+		//-------------------------------
+		levelsof wz02_3digit
+		//generate a variable which in each observation gives the amount of revenue the firm makes in all wzs
+		
+		foreach distinct_wz in `r(levels)' {
+		replace marker_wz_hlp = 1 if "`distinct_wz'" == wz02_3digit & substr("`distinct_wz'",1,2) == wz_unr_like_statistical2
+		by unr jahr: egen Revenue_`distinct_wz' = total(marker_wz_hlp * pe_15)
+		replace marker_wz_hlp = 0
+		
+		}
+		//rename the unclear revenue to use Revenue_* in the future without referring to the unclear stuff
+		rename Revenue_unclear Unclear_Revenue
+		//generate the variable reffering to the most revenue
+		gen wz_with_most_revenue = ""
+		//check each revenue to find the biggest in a single wz
+		egen most_revenue = rowmax(Revenue_*)
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = substr("`wz_revenue'", 9,.) if `wz_revenue' == most_revenue & wz_with_most_revenue ==""
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' == most_revenue & wz_with_most_revenue !="" & wz_with_most_revenue != substr("`wz_revenue'", 9,.)
+		}
+		//find whether another revenue would be bigger if the unclear revenue beloged to it
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' + Unclear_Revenue > most_revenue  & substr("`wz_revenue'", 9,.) != wz_with_most_revenue
+		}
+		drop Revenue_* Unclear_Revenue
+		gen wz_unr_like_statistical3 = wz_with_most_revenue
+		drop wz_with_most_revenue most_revenue
+		
+		
+		
+		//here we generate the 4 digit WZ
+		//-------------------------------
+		levelsof wz02_4digit
+		//generate a variable which in each observation gives the amount of revenue the firm makes in all wzs
+		foreach distinct_wz in `r(levels)' {
+		replace marker_wz_hlp = 1 if "`distinct_wz'" == wz02_4digit & substr("`distinct_wz'",1,3) == wz_unr_like_statistical3
+		by unr jahr: egen Revenue_`distinct_wz' = total(marker_wz_hlp * pe_15)
+		replace marker_wz_hlp = 0
+		}
+		//rename the unclear revenue to use Revenue_* in the future without referring to the unclear stuff
+		rename Revenue_unclear Unclear_Revenue
+		//generate the variable reffering to the most revenue
+		gen wz_with_most_revenue = ""
+		//check each revenue to find the biggest in a single wz
+		egen most_revenue = rowmax(Revenue_*)
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = substr("`wz_revenue'", 9,.) if `wz_revenue' == most_revenue & wz_with_most_revenue ==""
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' == most_revenue & wz_with_most_revenue !="" & wz_with_most_revenue != substr("`wz_revenue'", 9,.)
+		}
+		//find whether another revenue would be bigger if the unclear revenue beloged to it
+		foreach wz_revenue of varlist Revenue_* {
+		replace wz_with_most_revenue = "unclear" if `wz_revenue' + Unclear_Revenue > most_revenue  & substr("`wz_revenue'", 9,.) != wz_with_most_revenue
+		}
+		drop Revenue_* Unclear_Revenue
+		gen wz_unr_like_statistical4 = wz_with_most_revenue
+		drop wz_with_most_revenue most_revenue
+
+
+//control whether wzs are indeed cascading down
+gen marker_problem = 0 
+replace marker_problem = 1 if wz_unr_like_statistical3 != substr(wz_unr_like_statistical4,1,3) & wz_unr_like_statistical4 != "unclear" 
+replace marker_problem = 1 if wz_unr_like_statistical2 != substr(wz_unr_like_statistical3,1,2) & wz_unr_like_statistical3 != "unclear"
+replace marker_problem = 1 if wz_unr_like_statistical2 != substr(wz_unr_like_statistical4,1,2) & wz_unr_like_statistical4 != "unclear"
+quietly count if marker_problem == 1
+if `r(N)' > 0 {
+tab jahr, su(marker_problem)
+display "error: inconsistent assignement of wz_s by the code"
+}
+
+drop marker_problem
+
+
+//check comparability of the statistical offices' wz-measure and our own
+gen difference_our_and_stat_wz2 = 0
+replace difference_our_and_stat_wz2 = 1 if substr(wz_u,1,2) != wz_unr_like_statistical2
+tab jahr, su(difference_our_and_stat_wz2)
+drop difference_our_and_stat_wz2
+
+gen difference_our_and_stat_wz2 = 0
+replace difference_our_and_stat_wz2 = 1 if  substr(wz_u,1,2) != wz_unr_like_statistical2 & wz_unr_like_statistical2 != "unclear"
+tab jahr, su(difference_our_and_stat_wz2)
+drop difference_our_and_stat_wz2
+
+gen difference_our_and_stat_wz3 = 0
+replace difference_our_and_stat_wz3 = 1 if  substr(wz_u,1,3) != wz_unr_like_statistical3
+tab jahr, su(difference_our_and_stat_wz3)
+drop difference_our_and_stat_wz3
+
+gen difference_our_and_stat_wz3 = 0
+replace difference_our_and_stat_wz3 = 1 if  substr(wz_u,1,3) != wz_unr_like_statistical3 & wz_unr_like_statistical3 != "unclear"
+tab jahr, su(difference_our_and_stat_wz3)
+drop difference_our_and_stat_wz3
+
+gen difference_our_and_stat_wz4 = 0
+replace difference_our_and_stat_wz4 = 1 if  wz_u != wz_unr_like_statistical4
+tab jahr, su(difference_our_and_stat_wz4)
+drop difference_our_and_stat_wz4
+
+gen difference_our_and_stat_wz4 = 0
+replace difference_our_and_stat_wz4 = 1 if  wz_u != wz_unr_like_statistical4 & wz_unr_like_statistical4 != "unclear" 
+tab jahr, su(difference_our_and_stat_wz4)
+drop difference_our_and_stat_wz4
+
+
+//generate a numerical version for use further down
+destring (wz_unr_like_statistical4), gen (wz) force
+
+//merge original wz_u data
+merge m:1 unr bnr jahr using "$Firmendaten", keepusing(unr bnr jahr wz_u)
+drop if _merge ==2
+drop _merge
+
+keep wz_unr_like_statistical2 wz_unr_like_statistical3 wz_unr_like_statistical4 wz_u wz unr jahr
+duplicates drop
+
+
+xtset unr jahr 
+
+gen l_wz = l.wz
+
+compress _all
+save "$savepath\Proximity Measures", replace
+}
+}
+//
+
+
+
+//-----------------------------------\\
+//---calculate revenue price index---\\
+//***********************************\\
+{
+if "$calculate_revenue_price_index" == "YES" {
+
+log using "$savepath\freigabe\Log_Data_preparation.log", append name(Log_Data_preparation)
+
+
+//---------------------------------------------------\\
+//------generate "entry"- & "exit" data on unr-------\\
+//---------------------------------------------------\\
+{
+
+
+	use unr jahr if jahr >= $start_year_estimate  & jahr <= $end_year_load using "$savepath\Augmented_Product_Data_GP_ID_Purged_UNR_lvl", clear
+	drop if unr==.
+	duplicates drop
+	xtset unr jahr
+	bys unr: egen start_year = min(jahr)
+	gen entry_unr = 1 if jahr == start_year
+	gen reentry_unr = 1 if l.start_year ==. & entry_unr !=1 
+	gen exit_unr = 1 if f.start_year ==. & jahr != $end_year_load
+	
+	foreach var in entry_unr reentry_unr exit_unr {
+	replace `var' = 0 if `var'==.
+	tab jahr, su (`var')
+	}
+
+	
+	
+	
+	save "$savepath\Entry and reentry flags_unr", replace
+	
+	
+}
+//
+
+
+//---------------------------------------------------\\
+//------generate "entry"- & "exit" data on gp-------\\
+//---------------------------------------------------\\
+{
+
+
+	use final_gp02 jahr if jahr >= $start_year_estimate  & jahr <= $end_year_load using "$savepath\Augmented_Product_Data_GP_ID_Purged_UNR_lvl", clear
+	
+	
+	drop if final_gp02==""
+	duplicates drop
+	egen final_gp02_ID = group(final_gp02)
+	xtset final_gp02_ID jahr
+
+	
+	by final_gp02_ID: egen start_year = min(jahr)
+	gen product_entry_global = 1 if l.start_year ==. 
+	
+	foreach var in product_entry_global {
+	replace `var' = 0 if `var'==.
+	tab jahr, su (`var')
+	}
+
+	drop final_gp02_ID
+	save "$savepath\Entry and reentry flags_product_entry_global", replace
+	
+	
+}
+//
+
+
+//---------------------------------------------------\\
+//----------------calculate price index--------------\\
+//---------------------------------------------------\\
+{
+use if jahr >= $start_year_estimate  & jahr <= $end_year_load using "$savepath\Augmented_Product_Data_GP_ID_Purged_UNR_lvl", clear
+
+
+drop if unr==.
+drop if final_gp02 =="" 
+
+	
+// gather flags for product entry etc
+
+	merge m:1 final_gp02 jahr using "$savepath\Entry and reentry flags_product_entry_global"
+	drop if _merge !=3
+	drop _merge
+	
+	
+//create flags for FIRM product entry
+	xtset Prod_ID_variable jahr
+	by Prod_ID_variable: egen start_year_unr_product = min(jahr)
+	gen product_entry_unr = 1 if l.start_year_unr_product == .
+	replace product_entry_unr = 0 if product_entry_unr ==.
+	
+//create a flag for Firm product portfolio switch
+	bysort unr jahr: egen min_of_product_unr_entry = min(product_entry_unr)
+	
+//generate total Absatzproduktionswert
+	bys unr jahr: egen Absatzproduktionswert_unr = total(pe_15)
+	save "$savepath\Umsatzalternative_unr", replace
+
+//generate p and index growth for a product
+	xtset Prod_ID_variable jahr
+	gen p = pe_15 / Q
+	gen ln_growth_p = ln(p) - ln(l.p)
+	
+	
+
+	
+	
+	
+	
+	// here we drop outlier in price growth we can chose between different pctiles
+	gen exp_ln_growth_p= exp(ln_growth_p)
+	fdzsum exp_ln_growth_p, det 
+	drop exp_ln_growth_p
+	
+	
+	
+	_pctile ln_growth_p , nq(100)
+	gen ln_growth_p_hlp = inrange(ln_growth_p, `r(r1)', `r(r99)')
+	gen ln_growth_p_hlp6 = inrange(ln_growth_p, `r(r3)', `r(r97)')
+	gen marker_extreme = 1 if ln_growth_p_hlp ==0 & ln_growth_p != .
+	replace marker_extreme = 0 if marker_extreme == . & ln_growth_p != .
+	
+	tab jahr, su(marker_extreme)
+	
+	
+	replace ln_growth_p = . if ln_growth_p_hlp ==0
+	
+	drop ln_growth_p_hlp ln_growth_p_hlp6
+	
+	
+
+
+	
+	gen exp_ln_growth_p= exp(ln_growth_p) if marker_extreme==1
+	fdzsum exp_ln_growth_p, det 
+	drop exp_ln_growth_p 
+	
+
+preserve
+/*
+gen ln_p_pit = ln(p_pit)
+egen r_tot = total(r_pit), by(year)
+gen r_pit_share = r / r_tot
+reghdfe ln_p_pit [aw = r_pit_share], abs(fe_it=i.siren#i.year i.prodid) keepsingletons
+gen double p_it = exp(fe_it + _b[_cons]) if e(sample)
+
+p_pit = price at product-firm-year level (in the French data, we have something more complicated because we also have the type of sale, direct/indirect, but this is an extra dimension that can be simply included in product variety)
+r_pit = revenue at product-firm-year level
+siren = firm id
+prodid = product-variety id
+p_it = price index at firm-year level
+
+The base value is made up of the first firm in the first year. The value will not be 1, but rather 1 + constant. We can also make it just 1 by eliminating _b[_cons] from the last line, it does not change anything. The advantage is that you can check what comes out and see if the results make sense.
+
+*/
+
+cap noisily gen ln_p_pit = ln(p)
+cap noisily egen r_tot = total(pe_15), by(jahr)
+cap noisily gen r_pit_share = pe_15 / r_tot
+
+cap noisily egen prodid = group(final_gp02)
+
+cap noisily reghdfe ln_p_pit [aw = r_pit_share], abs(fe_it=i.unr#i.jahr i.prodid) keepsingletons  $iwh_run_reghdfe
+*cap noisily gen double p_it = exp(fe_it + _b[_cons]) if e(sample)
+cap noisily gen double p_it_noconst = exp(fe_it ) if e(sample)
+
+cap noisily keep unr jahr     p_it_noconst  //p_it
+cap noisily duplicates drop
+
+cap noisily drop if  p_it_noconst ==.   //p_it ==. |
+cap noisily save "$savepath\Rev_p_index_mauro.dta" , replace
+
+restore
+	
+	
+	
+	// after dropping the extreme values we fill in missing prices with industry time (location not done) averages
+	// merge wz_u 
+	merge m:1 unr jahr using "$savepath\Proximity Measures"	
+	drop if _merge!=3
+	drop _merge
+	
+	
+	gen mean_price = .
+	foreach wz_level in 4 3 2 {
+	
+	bys wz_unr_like_statistical`wz_level' jahr: egen mean_price_hlp = mean(ln_growth_p) if mean_price ==. 
+	replace mean_price = mean_price_hlp if mean_price ==.
+	drop mean_price_hlp
+	}
+	
+	replace ln_growth_p = mean_price if ln_growth_p==.
+	
+	drop mean_price
+	drop wz_unr_like_statistical2 wz_unr_like_statistical3 wz_unr_like_statistical4 wz
+	
+	
+	// we start with calculating a product level price index
+	//------------------------------------------------------
+	// if we do not want to run p index unr onlyGP:
+	
+		gen P_index_unr_onlyGP = runiform()
+			gen P_index_unr_onlyGP_marker = "Prod only is defunct"
+			
+			
+	/*
+	
+	------------------------------------
+	THIS IS WRONG  mean of EXP not LN
+	------------------------------------
+	
+	
+	gen P_index_unr_onlyGP = ln(1) if $start_year_estimate == jahr
+	gen P_index_unr_onlyGP_marker = ""
+
+	
+	//make a loop to continue the index beyond the start year AND set starting firms/products to industry averages
+	forvalues count = 1/14 {
+	gen digit_`count' = substr(final_gp02,1,`count')
+	}
+	drop digit_13 digit_1 digit_2 digit_3
+	
+	forvalues yearcount =  $start_year_estimate / $end_year_load {
+		if `yearcount' != $start_year_estimate {
+		quietly xtset Prod_ID_variable jahr
+		replace P_index_unr_onlyGP = l.P_index_unr_onlyGP + ln_growth_p if jahr == `yearcount'
+		display "insert start values for the price index if the product entered the sample"
+		display "we are using averages of the first 14 12 11 10 9 8 7 6 5 and 4 digits"
+		display "this is the year: `yearcount'"
+		quietly count if P_index_unr_onlyGP == .
+		local start = `r(N)'
+		foreach digitcount in 14 12 11 10 9 8 7 6 5 4 {
+		quietly bys digit_`digitcount' jahr: egen avg_P_index_unr_onlyGP_`digitcount' = mean(P_index_unr_onlyGP)  if jahr == `yearcount'
+		quietly replace P_index_unr_onlyGP_marker = "replaced`digitcount'" if jahr == `yearcount' & P_index_unr_onlyGP ==. & (product_entry_global ==1| product_entry_unr==1 ) & Q !=. & avg_P_index_unr_onlyGP_`digitcount' !=.
+		quietly replace P_index_unr_onlyGP = avg_P_index_unr_onlyGP_`digitcount' if jahr == `yearcount' & P_index_unr_onlyGP ==. & (product_entry_global ==1| product_entry_unr==1 ) & Q !=. & avg_P_index_unr_onlyGP_`digitcount' !=.
+		}
+		quietly count if P_index_unr_onlyGP == .
+		local changes = `start' - `r(N)'
+		display "all in all, we have started `changes' chains of price indeces"
+		drop avg_P_index_unr_onlyGP_*
+		}
+	}
+	
+
+	
+
+ drop digit_*
+ 	*/
+	
+	
+	
+ replace P_index_unr_onlyGP = exp(P_index_unr_onlyGP) 
+ save "$savepath\Rev_p_index", replace
+
+ 
+ 
+ 
+ 
+ 
+ // we start with calculating a firm level price index
+//------------------------------------------------------
+ 
+
+xtset Prod_ID_variable jahr
+
+// calculate weigths for firm level price index 
+// outcommented because of replace follow elsava et al 2004 warzynski smeets 2013
+
+gen s_unr = pe_15/Absatzproduktionswert_unr //if (Q !=. & Q != 0) & marker_extreme != 1
+gen s_weight_unr = (s_unr+l.s_unr)/2
+replace s_weight_unr = 0 if s_weight_unr ==.
+bys unr jahr: egen total_weight = total(s_unr)
+gen marker_ln_growth = 1 if ln_growth_p != .
+replace marker_ln_growth = 0 if marker_ln_growth == .
+by unr jahr: egen total_weight_in_index = total(s_weight_unr*marker_ln_growth) 
+gen marker_insuf_data = 1 if total_weight < 0.95
+bys unr jahr: egen delta_p_unr = total((s_weight_unr/total_weight_in_index) * ln_growth_p) 
+
+//drop product level information, we are computing the firm level index now
+keep unr jahr delta_p_unr marker_insuf_data min_of_product_unr_entry total_weight_in_index
+duplicates drop 
+
+//gather flags for firm entry etc
+	merge m:1 unr jahr using "$savepath\Entry and reentry flags_unr"
+	drop if _merge !=3
+	drop _merge 
+	
+// merge wz_u 
+	merge m:1 unr jahr using "$savepath\Proximity Measures"	
+	drop if _merge!=3
+	drop _merge
+	
+	// we start with calculating a firm level price index
+	//------------------------------------------------------
+
+	gen P_index_unr = ln(1) if jahr == $start_year_estimate
+	
+ 	forvalues yearcount =  $start_year_estimate / $end_year_load {
+		if `yearcount' != $start_year_estimate {
+		quietly xtset unr jahr
+
+		
+		replace P_index_unr = l.P_index_unr + delta_p_unr if jahr == `yearcount' & marker_insuf_data != 1 & (entry_unr !=1 & reentry_unr != 1 & min_of_product_unr_entry != 1 )
+		
+		display "insert start values for the price index if the product entered the sample"
+		display "we are using averages of 4, 3 and 2 digit WZs"
+		display "this is the year: `yearcount'"
+		quietly count if P_index_unr == .
+		local start = `r(N)'
+		foreach wz_level in 4 3 2 {
+		
+		
+		 replace P_index_unr =  exp(P_index_unr)
+		 bys wz_unr_like_statistical`wz_level' jahr: egen avg_P_index_unr_exp`wz_level'`yearcount' = mean(P_index_unr)  if jahr == `yearcount' 
+	
+		
+		
+		
+		 replace P_index_unr = avg_P_index_unr_exp`wz_level'`yearcount' if jahr == `yearcount' & P_index_unr ==. & (entry_unr ==1| reentry_unr==1 | min_of_product_unr_entry == 1) & avg_P_index_unr_exp`wz_level'`yearcount' !=.
+		
+		replace P_index_unr = ln(P_index_unr)
+		
+		}
+		quietly count if P_index_unr == .
+		local changes = `start' - `r(N)'
+		display "all in all, we have started `changes' chains of firm price indeces"
+		
+		//drop avg_P_index_unr*
+		}
+	}
+	
+	replace P_index_unr = exp(P_index_unr)
+
+	
+keep unr jahr P_index_unr delta_p_unr marker_insuf_data entry_unr reentry_unr total_weight_in_index
+merge 1:m unr jahr using "$savepath\Rev_p_index"
+drop _merge
+
+ // we start with calculating a firm level price index WITHOUT the respective product
+//-----------------------------------------------------------------------------------
+ 
+
+xtset Prod_ID_variable jahr
+
+gen s_unr = pe_15/Absatzproduktionswert_unr //if (Q !=. & Q != 0) & marker_extreme != 1
+gen s_weight_unr = (s_unr+l.s_unr)/2
+replace s_weight_unr = 0 if s_weight_unr ==.
+xtset Prod_ID_variable jahr
+
+gen delta_p_product =  s_weight_unr*ln_growth_p 
+replace s_weight_unr = 0 if delta_p_product ==.
+replace delta_p_product = 0 if delta_p_product ==.
+
+
+// calculate price changes for firm level price index WITHOUT one product
+gen delta_p_unr_withoutGP = (delta_p_unr * total_weight_in_index - delta_p_product) * 1/(total_weight_in_index-s_weight_unr)
+
+replace  delta_p_unr_withoutGP = delta_p_unr if marker_insuf_data != 1 & delta_p_unr_withoutGP == .
+replace  delta_p_unr_withoutGP = delta_p_unr if (product_entry_global ==1| product_entry_unr==1 ) & delta_p_unr_withoutGP == .
+	// we start with calculating a firm level price index
+	//------------------------------------------------------
+	gen P_index_unr_withoutGP = ln(1) if jahr == $start_year_estimate
+ 	forvalues yearcount =  $start_year_estimate / $end_year_load {
+		if `yearcount' != $start_year_estimate {
+		quietly xtset Prod_ID_variable jahr
+		replace P_index_unr_withoutGP = l.P_index_unr_withoutGP + delta_p_unr_withoutGP if jahr == `yearcount' & marker_insuf_data != 1 & ( entry_unr !=1 & reentry_unr != 1 & min_of_product_unr_entry != 1 & product_entry_unr != 1 )
+		replace P_index_unr_withoutGP = ln(P_index_unr) if jahr == `yearcount' & (product_entry_unr == 1| entry_unr ==1| reentry_unr==1 | min_of_product_unr_entry == 1  ) & P_index_unr_withoutGP ==.
+		}
+	}
+	replace P_index_unr_withoutGP = exp(P_index_unr_withoutGP)
+	drop total_weight
+//close calculate price indices sub-chapter
+}
+//
+
+
+//---------------------------------------------------\\
+//------------------clean price index----------------\\
+//---------------------------------------------------\\
+{
+
+// Delete top and botton 1 % of price indice -> Außreißer löschen
+//---------------------------------------------------------------
+ 
+global PriceIndexList P_index_unr P_index_unr_onlyGP P_index_unr_withoutGP
+
+foreach var in $PriceIndexList {
+display "summary of 1-99 quantile of the different price indeces: `var' BEFORE DROP"
+fdzsum `var' , det
+
+}
+
+
+/*
+
+// not needed when outlier in p growth are already dropped / see top /
+//-------------------------------------------------------------------
+
+
+foreach Price in $PriceIndexList { 
+_pctile `Price' , nq(100)
+gen `Price'_hlp = inrange(`Price', `r(r1)', `r(r99)')
+gen `Price'_hlp6 = inrange(`Price', `r(r3)', `r(r97)')
+replace `Price' = . if `Price'_hlp ==0
+}
+
+*/
+
+
+
+// Zu Große Preisentwicklungen werden markiert , könnten falsch sein
+//mark suspicious Index numbers
+gen flg_price_index_unr = 1 if (P_index_unr<0.05 | P_index_unr>20) & P_index_unr!=.
+tab jahr if flg_price_index_unr == 1
+
+// Hier werden die einzelnen Preisindizes zusammengefasst und graphisch dargestellt.
+foreach var in $PriceIndexList {
+display "summary of 1-99 quantile of the different price indeces: `var'"
+fdzsum `var' , det
+kdensity `var'
+graph export "$savepath\Freigabe\Priceindices\kdensity_`var'.pdf", replace
+}
+
+//check the effect of replace on onlyGP
+tab P_index_unr_onlyGP_marker
+
+bys Prod_ID_variable: egen marker_help = mode(P_index_unr_onlyGP_marker)
+
+gen P_index_unr_onlyGP_sum = P_index_unr_onlyGP if marker_help == ""
+kdensity P_index_unr_onlyGP_sum 
+graph export "$savepath\Freigabe\Priceindices\kdensity_P_index_unr_onlyGP_without_replace.pdf", replace
+
+
+fdzsum P_index_unr_onlyGP_sum 
+
+display "tab price indices"
+fdztabstat $PriceIndexList , statistics(mean var sd p10 p25 p50 p75 p90 count) 
+
+log close Log_Data_preparation
+
+
+keep P_index_unr_onlyGP unr jahr P_index_unr P_index_unr_withoutGP final_gp02 Prod_ID_variable
+duplicates drop
+sort unr jahr final_gp02
+compress _all
+save "$savepath\Rev_p_index", replace
+display "This is a data set of self constructed (from prod. erhebung) product and firm price indices"
+
+
+
+keep unr jahr P_index_unr
+duplicates drop
+sort unr jahr
+compress _all
+save "$savepath\Firmenpreisindices", replace
+display "This is a list of self constructed (from prod. erhebung) firm price indices"
+
+
+
+use "$savepath\Umsatzalternative_unr", clear
+keep Absatzproduktionswert_unr jahr unr
+duplicates drop
+save "$savepath\Umsatzalternative_unr", replace
+display "this minimizes the size of the Produced_Revenue file"
+
+}
+//
+
+}
+}
+//
+
+
+//------------------------------------------\\
+//----------Generate Capital Stocks---------\\
+//******************************************\\
+{
+if "$generate_capital_stocks" == "YES" {
+
+
+
+
+
+//load if gwap because land_u is only available at the kdfv
+if  "$IWH_run" == "YES"  {
+
+
+//load data
+use jahr  unr wz_u ieu kse  ieu_ef46 ieu_ef47  ieu_ef48 ieu_ef49 ieu_ef50 ieu_ef51 ieu_ef52 /*
+*/ ieu_ef53 ieu_ef54 ieu_ef121 ieu_ef122 ieu_ef123 ieu_ef124 ieu_ef125 ieu_ef55 ieu_ef124 ieu_ef125 kse_ef65 kse_ef74 kse_ef75 /*
+*/ kse_ef27 kse_ef24 kse_ef25 kse_ef46/*
+*/  kse_ef86 kse_ef84 if jahr >= $start_year_prodvars & jahr <= $end_year_load using "$Firmendaten" , clear
+
+gen land_u_hlp = runiform()* 99
+replace land_u_hlp = round(land_u)
+replace land_u_hlp = 10 if land_u < 10
+bys unr jahr: egen land_u = max(land_u_hlp)
+
+drop land_u_hlp
+}
+
+
+
+if "$Wissens_Arbeitspl" == "YES" | "$Fernrechnen" == "YES" {
+
+//load data
+use jahr  unr wz_u ieu kse  ieu_ef46 ieu_ef47  ieu_ef48 ieu_ef49 ieu_ef50 ieu_ef51 ieu_ef52 /*
+*/ ieu_ef53 ieu_ef54 ieu_ef121 ieu_ef122 ieu_ef123 ieu_ef124 ieu_ef125 ieu_ef55 ieu_ef124 ieu_ef125 kse_ef65 kse_ef74 kse_ef75 /*
+*/ kse_ef27 kse_ef24 kse_ef25 kse_ef46  land_u/*
+*/  kse_ef86 kse_ef84 if jahr >= $start_year_prodvars & jahr <= $end_year_load using "$Firmendaten" , clear
+
+}
+//close loading
+
+
+
+
+duplicates drop 
+
+// here just to add KMR 
+global Capdefinitions_help  KMRSoft  KMR  KMRSoft_nom  KM_nomR
+**************************************
+
+
+// ieu_ef46  ieu_ef47   ieu_ef48   ieu_ef53   ieu_ef123 
+foreach invest in   ieu_ef124   ieu_ef125 {   
+replace `invest' = 0 if  `invest' ==. & jahr <2009  & ieu ==1 
+}
+
+if "$KMR_SOFT_fix" == "YES"  {
+foreach invest in   ieu_ef124   ieu_ef125 {   
+replace `invest' = 0 if   jahr <2009  & ieu ==1 
+}
+}
+
+
+
+
+
+log using "$savepath\freigabe\Log_Data_preparation.log", append name(Log_Data_preparation)
+
+merge 1:1 unr jahr using "$savepath\WZ08 assigned" 
+drop if _merge == 2
+drop _merge
+merge 1:1 unr jahr using  "$savepath\Proximity Measures", keepusing(unr jahr wz_unr_like_statistical2)
+drop if _merge == 2 
+drop _merge
+
+
+
+
+
+gen WZ2008 = substr(wz_08_like_statistical,1,2)
+
+log close Log_Data_preparation
+
+merge m:1 jahr WZ2008 using "$savepath\Merkmale_WZ.dta", keepusing(Price_Index_Invest_Anlagen Price_Index_Invest_Ausr /*
+	*/ Price_Index_Invest_Bauten Price_Index_Invest_Sonstige share_equipment_to_total share_Buildings_to_total /*
+	*/ depre_rate_Buildings depre_rate_Equipment Abschreibungspreisindex)
+
+drop if _merge == 2 
+
+// gen depreciation rate
+gen Abschr = share_Buildings_to_total*depre_rate_Buildings + share_equipment_to_total * depre_rate_Equipment
+
+
+
+
+gen PriceInvBuilding= Price_Index_Invest_Bauten/100
+gen PriceInvEquipment= Price_Index_Invest_Ausr/100
+gen PriceInv = Price_Index_Invest_Anlagen/100
+gen PriceAbsch= Abschreibungspreisindex/100
+gen PriceSonst = Price_Index_Invest_Sonstige/100
+
+
+
+
+//Capital_Start_o0
+bys unr: egen numAbsch_o0_hlp=count(kse_ef74) if kse_ef74 !=0 & kse_ef74 !=.
+by unr: egen numAbsch_o0 = max(numAbsch_o0_hlp)
+gen Abschflag_o0 = 1 if (kse_ef74) !=. & (kse_ef74) != 0
+sort unr Abschflag_o0
+by unr Abschflag_o0: egen AbschMean_o0 = mean (kse_ef74/PriceAbsch)
+xtset unr jahr
+replace AbschMean_o0 =. if numAbsch_o0 < 3
+gen Schwerpunktfaktor_o0= Abschflag_o0 * jahr
+by unr: egen Absch_schwerpunkt_o0 = mean(Schwerpunktfaktor_o0)
+replace Absch_schwerpunkt_o0= round(Absch_schwerpunkt_o0)
+gen Dist_Absch_schwer_o0 = jahr - Absch_schwerpunkt_o0
+gen Ko0M_schwerpunkt = Absch_schwerpunkt_o0
+gen Ko0st_schwerpunkt = Absch_schwerpunkt_o0
+gen Dist_Ko0M_schwer = jahr - Ko0M_schwerpunkt
+gen Dist_Ko0st_schwer = jahr - Ko0st_schwerpunkt
+xtset unr jahr
+//Ko0M
+gen Ko0M = (AbschMean_o0 / Abschr) if jahr ==Absch_schwerpunkt_o0
+
+
+
+
+
+
+if "$KMR_SOFT_fix" != "YES"  |  $start_year_prodvars >1998  {
+gen flg_Viktor = 1 if kse_ef74 !=. & kse_ef74 !=0
+replace flg_Viktor = 0 if flg_Viktor ==.
+}
+
+
+if "$KMR_SOFT_fix" == "YES"  &  $start_year_prodvars <=1998  {
+gen flg_Viktor = 1 if kse_ef74 !=. & kse_ef74 !=0 & land_u != 2 & land_u != 6    
+replace flg_Viktor = 1 if kse_ef74 !=. & kse_ef74 !=0 & (land_u == 2 | land_u == 6) & jahr >= 1997  
+replace flg_Viktor = 0 if flg_Viktor ==.
+
+}
+
+
+
+
+bysort unr flg_Viktor: egen KM_schwerpunkt_hlp = min(jahr) if flg_Viktor ==1
+bysort unr: egen KM_schwerpunkt = max(KM_schwerpunkt_hlp)
+gen KM = (kse_ef74/Abschr)/PriceAbsch if jahr == KM_schwerpunkt
+gen KMRSoft = (kse_ef74/Abschr)/PriceAbsch if jahr == KM_schwerpunkt
+
+
+gen KM_nom = (kse_ef74)/Abschr if jahr == KM_schwerpunkt
+gen KMRSoft_nom = (kse_ef74)/Abschr if jahr == KM_schwerpunkt
+
+gen Dist_KM_schwer = jahr - KM_schwerpunkt
+gen Dist_KMRSoft_schwer = jahr - KM_schwerpunkt
+
+gen Dist_KM_nom_schwer = jahr - KM_schwerpunkt
+gen Dist_KMRSoft_nom_schwer = jahr - KM_schwerpunkt
+
+xtset unr jahr
+local panel_length = $end_year_load - $start_year_prodvars 
+
+gen KO = 1
+gen  Dist_KO_schwer = 1
+
+foreach cap in    Ko0M  KM    KM_nom KMRSoft_nom  {
+gen `cap'R = `cap'
+gen  Dist_`cap'R_schwer = Dist_`cap'_schwer
+}
+
+
+
+
+
+global Capital_without_st =""
+global Capital_software = ""
+global Capital_without_st_nom =""
+global Capital_software_nom = ""
+
+
+
+
+foreach Capital in $Capdefinitions_help {
+if substr("`Capital'",-2, 2) =="MR"{
+global Capital_without_st = "$Capital_without_st" + " " + "`Capital'"
+}
+if substr("`Capital'",-6, 6) =="M_nomR"{
+global Capital_without_st_nom = "$Capital_without_st_nom" + " " + "`Capital'"
+}
+
+if substr("`Capital'",-8, 8) =="Soft_nom"{
+global Capital_software_nom = "$Capital_software_nom" + " " + "`Capital'"
+}
+if substr("`Capital'",-4, 4) =="Soft"{
+global Capital_software = "$Capital_software" + " " + "`Capital'"
+}
+
+
+
+
+}
+display "$Capital_without_st"
+foreach Capital in $Capital_without_st {
+//loop over law of motion without tax deductions for depreciation
+forvalues Count= 1/$panel_length  {
+replace `Capital'= l.`Capital'*(1 - l.Abschr)+l.ieu_ef46/l.PriceInvBuilding + l.ieu_ef47/l.PriceSonst + l.ieu_ef48/l.PriceInvEquipment/*
+*/ - l.ieu_ef53/l.PriceInv + l.ieu_ef123/l.PriceInv if Dist_`Capital'_schwer ==`Count'	//derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+replace `Capital' = (f.`Capital' - (ieu_ef46/PriceInvBuilding + ieu_ef47/PriceSonst + ieu_ef48/PriceInvEquipment) /*
+*/ + ieu_ef53/PriceInv - ieu_ef123/PriceInv)/(1-Abschr) if Dist_`Capital'_schwer ==(-1)*`Count'  //derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+}
+}
+
+
+
+
+display "$Capital_software"
+foreach Capital in $Capital_software {
+//loop over law of motion without tax deductions for depreciation
+forvalues Count= 1/$panel_length  {
+replace `Capital'= l.`Capital'*(1 - l.Abschr)+l.ieu_ef46/l.PriceInvBuilding + l.ieu_ef47/l.PriceSonst + l.ieu_ef48/l.PriceInvEquipment/*
+*/ - l.ieu_ef53/l.PriceInv + l.ieu_ef123/l.PriceInv + l.ieu_ef124/l.PriceSonst + l.ieu_ef125/l.PriceSonst if Dist_`Capital'_schwer ==`Count'	//derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+replace `Capital' = (f.`Capital' - (ieu_ef46/PriceInvBuilding + ieu_ef47/PriceSonst + ieu_ef48/PriceInvEquipment) /*
+*/ + ieu_ef53/PriceInv - ieu_ef123/PriceInv   - ieu_ef124/PriceSonst   - ieu_ef125/PriceSonst)/(1-Abschr) if Dist_`Capital'_schwer ==(-1)*`Count'  //derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+}
+}
+
+
+
+//NOMINAL CAPITAL STOCKS FOR PROFITABILITY
+
+display "$Capital_without_st_nom"
+foreach Capital in $Capital_without_st_nom {
+//loop over law of motion without tax deductions for depreciation
+forvalues Count= 1/$panel_length  {
+replace `Capital'= l.`Capital'*(1 - l.Abschr)+l.ieu_ef46 + l.ieu_ef47 + l.ieu_ef48/*
+*/ - l.ieu_ef53 + l.ieu_ef123 if Dist_`Capital'_schwer ==`Count'	//derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+replace `Capital' = (f.`Capital' - (ieu_ef46 + ieu_ef47 + ieu_ef48) /*
+*/ + ieu_ef53 - ieu_ef123)/(1-Abschr) if Dist_`Capital'_schwer ==(-1)*`Count'  //derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+}
+}
+
+
+
+
+display "$Capital_software_nom"
+foreach Capital in $Capital_software_nom {
+//loop over law of motion without tax deductions for depreciation
+forvalues Count= 1/$panel_length  {
+replace `Capital'= l.`Capital'*(1 - l.Abschr)+l.ieu_ef46 + l.ieu_ef47 + l.ieu_ef48/*
+*/ - l.ieu_ef53 + l.ieu_ef123 + l.ieu_ef124 + l.ieu_ef125 if Dist_`Capital'_schwer ==`Count'	//derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+replace `Capital' = (f.`Capital' - (ieu_ef46 + ieu_ef47 + ieu_ef48) /*
+*/ + ieu_ef53 - ieu_ef123   - ieu_ef124   - ieu_ef125)/(1-Abschr) if Dist_`Capital'_schwer ==(-1)*`Count'  //derzeit keine abgÃ¤nge Mietkapital -> schreibt sich ab
+}
+}
+
+
+
+
+//drop all neagtive values for capital
+foreach Capital in $Capdefinitions_help {
+replace `Capital' =. if `Capital' <=0
+}
+
+
+rename KM_nomR KMR_nom
+
+global Capdefinitions_help  KMRSoft  KMR  KMRSoft_nom  KMR_nom
+
+log using "$savepath\freigabe\Log_Data_preparation.log", append name(Log_Data_preparation)
+// tabulate all variables of interest for data appendix
+display " tab capital variable"
+fdztabstat $Capdefinitions_help , statistics(mean var sd p10 p25 p50 p75 p90 count) 
+
+
+fdztabstat  $Capdefinitions_help , by (jahr) statistics(mean)
+
+
+log close Log_Data_preparation
+
+
+
+keep unr jahr $Capdefinitions_help wz_u 
+save "$savepath\Capital Measures", replace
+
+
+
+
+}
+}
+//
+
+
+//----------------------------------------------------------\\
+//----------Calculate Produktion function variables---------\\
+//**********************************************************\\
+{
+if "$Prod_fun_variables" == "YES" {
+
+
+clear
+
+//load if gwap because land_u is only available at the kdfv
+if  "$IWH_run" == "YES"  {
+
+use jahr unr/*
+*/ wz_u kse mb mb_26  mb_10 mb_14 ieu_ef49 ieu_ef123    ieu_ef124   ieu_ef125 ieu/*
+*/ kse_ef24 ieu_ef46 ieu_ef47 ieu_ef48 ieu_ef53 ieu_ef55/*
+*/ kse_ef25 kse_ef27 kse_ef35 kse_ef37 kse_ef38 kse_ef39 kse_ef40/*
+*/  kse_ef42 kse_ef41 kse_ef43 kse_ef44 kse_ef46 jbu_ef14 jbu_ef15 /*
+*/ kse_ef53 kse_ef55 kse_ef59 jbu_ef15 kse_ef60 kse_ef61 kse_ef62 kse_ef87/*
+*/ kse_ef63 kse_ef64 kse_ef65 kse_ef66 kse_ef67 kse_ef68 kse_ef75 kse_ef78 kse_ef86 kse_ef87/*
+*/ if kse == 1 & jahr >= $start_year_prodvars & jahr <= $end_year_load using "$Firmendaten" , clear
+
+gen land_u_hlp = runiform()* 99
+replace land_u_hlp = round(land_u)
+replace land_u_hlp = 10 if land_u < 10
+bys unr jahr: egen land_u = max(land_u_hlp)
+
+drop land_u_hlp
+}
+//load if kdfv because land_u is available
+if "$Wissens_Arbeitspl" == "YES" | "$Fernrechnen" == "YES" {
+
+
+
+use jahr unr/*
+*/ wz_u kse mb mb_26  mb_10 mb_14 ieu_ef49 ieu_ef123/*
+*/ kse_ef24 ieu_ef46 ieu_ef47 ieu_ef48 ieu_ef53 ieu_ef55 ieu_ef123   ieu_ef124   ieu_ef125 ieu/*
+*/ kse_ef25 kse_ef27 kse_ef35 kse_ef37 kse_ef38 kse_ef39 kse_ef40/*
+*/  kse_ef42 kse_ef41 kse_ef43 kse_ef44 kse_ef46 jbu_ef14 jbu_ef15 land_u/*
+*/ kse_ef53 kse_ef55 kse_ef59 jbu_ef15 kse_ef60 kse_ef61 kse_ef62 kse_ef87/*
+*/ kse_ef63 kse_ef64 kse_ef65 kse_ef66 kse_ef67 kse_ef68 kse_ef75 kse_ef78 kse_ef86 kse_ef87/*
+*/ if kse == 1 & jahr >= $start_year_prodvars & jahr <= $end_year_load using "$Firmendaten" , clear
+
+}
+
+replace mb_10 = 12 if mb_10>12 & mb_10 !=.
+gen L_bnr =  mb_14/mb_10
+
+bysort unr jahr: egen Tex = total(mb_26)
+by unr jahr: egen tot_L_bnr = total(L_bnr)
+drop  mb*  L_bnr
+
+duplicates drop 
+
+
+
+display "CHECK DATA BY YEARS"  
+cap noisily tabstat mb_26  mb_10 mb_14 ieu_ef49 ieu_ef123 kse_ef24 ieu_ef46 ieu_ef47 ieu_ef48 ieu_ef53 ieu_ef55 ieu_ef123   ieu_ef124   ieu_ef125  kse_ef25 kse_ef27 kse_ef35 kse_ef37 kse_ef38 kse_ef39 kse_ef40  kse_ef42 kse_ef41 kse_ef43 kse_ef44 kse_ef46 jbu_ef14 jbu_ef15  kse_ef53 kse_ef55 kse_ef59 jbu_ef15 kse_ef60 kse_ef61 kse_ef62 kse_ef87 kse_ef63 kse_ef64 kse_ef65 kse_ef66 kse_ef67 kse_ef68 kse_ef75 kse_ef78 kse_ef86 kse_ef87 ,  by(jahr) statistics(mean var sd p10 p25 p50 p75 p90 count) 
+
+
+
+gen D_Exp = 1 if Tex > 0 & Tex!=.   
+replace D_Exp = 0 if D_Exp != 1 /////& Tex!=.  
+
+if ("$Productivity_ost_west" != "YES") &  ("$SIZE_PMP_LMP" != "YES") &   "$IWH_run" != "YES"  {
+drop D_Exp
+
+gen D_Exp = 1 if Tex > 0 & Tex!=.   
+replace D_Exp = 0 if D_Exp != 1 & Tex!=.  
+}
+
+// Implement Priceindex
+//---------------------
+
+
+// ieu_ef46  ieu_ef47   ieu_ef48   ieu_ef53   ieu_ef123 
+foreach invest in   ieu_ef124   ieu_ef125 {   
+replace `invest' = 0 if  `invest' ==. & jahr <2009  & ieu ==1 
+}
+
+if "$KMR_SOFT_fix" == "YES"  {
+foreach invest in   ieu_ef124   ieu_ef125 {   
+replace `invest' = 0 if   jahr <2009  & ieu ==1 
+}
+}
+
+
+
+
+
+merge 1:1 unr jahr using "$savepath\WZ08 assigned"
+drop if _merge==2
+drop _merge
+
+gen WZ2008 = substr(wz_08_like_statistical,1,2)
+
+drop if unr == .
+drop if WZ2008 ==""
+drop if WZ2008 =="09"
+drop if WZ2008 =="08"
+drop if WZ2008 =="07"
+drop if WZ2008 =="06"
+drop if WZ2008 =="05"
+
+
+sort jahr WZ2008
+
+merge m:1 jahr WZ2008 using "$savepath\Merkmale_WZ.dta", keepusing(Vorleistungsindex  /*
+	*/  Price_Index_Invest_Bauten Price_Index_Invest_Ausr Price_Index_Rev Price_Index_Invest_Anlagen    Price_Index_Invest_Sonstige)
+
+drop if _merge==2
+drop _merge
+
+
+merge 1:1 jahr unr using "$savepath\Firmenpreisindices", keepusing(jahr unr P_index_unr)
+
+drop _merge
+
+//Variables
+merge m:1 jahr unr using "$savepath\Umsatzalternative_unr"  
+drop if _merge==2
+drop _merge 
+
+//CPI 
+merge m:1 jahr using "$savepath\CPI.dta"
+drop if _merge ==2
+drop _merge 
+
+//wz unr like 
+merge 1:1 unr jahr using  "$savepath\Proximity Measures", keepusing(unr jahr wz_unr_like_statistical4)
+
+drop _merge
+
+
+
+
+//Define Variables and drop useless observations -> Mb without Energy
+//-----------------------------------------------------------------------
+
+
+gen PriceM= Vorleistungsindex/100
+gen PriceFirm = P_index_unr
+gen PriceSonstUmsatz = Price_Index_Rev/100
+gen PriceInvBuilding= Price_Index_Invest_Bauten/100
+gen PriceInvEquipment= Price_Index_Invest_Ausr/100
+gen PriceInv = Price_Index_Invest_Anlagen/100
+gen PriceWage = CPI_2001_Aggregate/100
+gen PriceErzeug = Price_Index_Rev/100
+gen PriceInvSonst =  Price_Index_Invest_Sonstige /100
+drop CPI_2001_Aggregate
+
+// $% kse_ef35 = umsatz aus kse nur aus eigenen erzeugnissen
+// Absatzproduktionswert_unr = zu markwerten bewertete produktion unabhå¯§ig(!!!) vom tatså¤¨lichen Verkauf 
+// -> verkauftspreis vs markwert (super sale, gutes geschå§´ gemacht etc.)
+
+		gen L_FTE = (kse_ef27 - kse_ef24 + kse_ef25 )
+		if $start_year_estimate <1999   {
+		
+		
+		replace L_FTE = kse_ef27
+			}
+
+gen Real_Software  =  ((ieu_ef125  /PriceInvSonst )  /100) / L_FTE if jahr >= 2009
+gen Real_Patent_Liz = (( ieu_ef124  /PriceInvSonst)  /100) / L_FTE if jahr >= 2009
+gen Real_Patent_Soft = (( ieu_ef124+ieu_ef125  /PriceInvSonst)  /100) / L_FTE if jahr >= 2009
+ 
+gen I_Proxy = (ieu_ef46/PriceInvBuilding + ieu_ef47/PriceInvSonst  + ieu_ef48/PriceInvEquipment - ieu_ef53/PriceInv + ieu_ef123/PriceInv + ieu_ef125  /PriceInvSonst  + ieu_ef124  /PriceInvSonst) 
+
+gen I_Proxy_nom = (ieu_ef46 + ieu_ef47  + ieu_ef48 - ieu_ef53 + ieu_ef123 + ieu_ef125    + ieu_ef124  ) 
+
+
+
+gen I_Proxy_noSoft = (ieu_ef46/PriceInvBuilding + ieu_ef47/PriceInvSonst  + ieu_ef48/PriceInvEquipment - ieu_ef53/PriceInv + ieu_ef123/PriceInv ) 
+gen I_Proxy_noSoft_nom = (ieu_ef46 + ieu_ef47  + ieu_ef48 - ieu_ef53 + ieu_ef123   ) 
+
+gen I_Proxy_Soft = (ieu_ef125  /PriceInvSonst  + ieu_ef124  /PriceInvSonst) 
+gen I_Proxy_Soft_nom = (ieu_ef125    + ieu_ef124  ) 
+
+
+
+
+gen RealInv_noSoft  =  (ieu_ef46/PriceInvBuilding + ieu_ef47/PriceInvSonst  + ieu_ef48/PriceInvEquipment - ieu_ef53/PriceInv + ieu_ef123/PriceInv   + ieu_ef124  /PriceInvSonst) / L_FTE   // ieu_ef125  /PriceInvSonst
+gen RealInv_noSoftPat  =  (ieu_ef46/PriceInvBuilding + ieu_ef47/PriceInvSonst  + ieu_ef48/PriceInvEquipment - ieu_ef53/PriceInv + ieu_ef123/PriceInv) / L_FTE   // ieu_ef124  /PriceInvSonst   // ieu_ef125  /PriceInvSonst
+
+
+
+
+
+xtset unr jahr
+egen maxi_year = max(jahr)
+global software_years = maxi_year - 2009
+gen dep_software = 0.20
+gen Cap_softpat = (ieu_ef124/PriceSonst + ieu_ef125/PriceSonst) if jahr == maxi_year
+
+
+
+forvalues num = 1/$software_years  {
+
+local help_year = 2014 - `num'
+
+replace Cap_softpat = (Cap_softpat*(1 - l.dep_software) + ieu_ef124/PriceInvSonst + ieu_ef125/PriceInvSonst) if jahr == `help_year'
+}
+
+
+
+gen Cap_soft =  (ieu_ef125/PriceInvSonst) if jahr == 2009
+
+
+forvalues num = 1/$software_years  {
+
+local help_year = 2009 + `num'
+
+replace Cap_soft = (l.Cap_soft*(1 - l.dep_software) + ieu_ef125/PriceInvSonst) if jahr == `help_year'
+}
+
+ 
+ 
+
+
+gen M_Proxy  = kse_ef53 /PriceM 
+
+gen B_Proxy = (kse_ef53 + kse_ef63) /PriceM 
+
+
+gen Mb = ((kse_ef53 - kse_ef55 +kse_ef63 + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+gen Mb_E = ((kse_ef53 +kse_ef63 + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+gen Mb_E_nom = (kse_ef53 +kse_ef63 + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )
+
+
+gen Mb_WP = ((kse_ef63 + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+gen Mb_WP_nom  = ((kse_ef63 + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 ))
+// Intermediate without leiharbeit (when we use wage)
+gen Mb_W = ((kse_ef53 - kse_ef55  + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+gen Mb_E_W = ((kse_ef53 + kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+gen Mb_WP_W = ((kse_ef66 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59)/PriceM)
+
+replace kse_ef67 = 0 if kse_ef67 ==.
+
+gen leih_arb = kse_ef63/PriceM
+ 
+
+if "$drop_long_term_mats" =="YES" {
+
+replace Mb = ((kse_ef53 - kse_ef55 +kse_ef63 + kse_ef66 -kse_ef67 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+replace Mb_E = ((kse_ef53 +kse_ef63 + kse_ef66 -kse_ef67  /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+replace Mb_E_nom = (kse_ef53 +kse_ef63 + kse_ef66 -kse_ef67   /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )
+
+
+replace Mb_WP = ((kse_ef63 + kse_ef66 -kse_ef67   /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+replace Mb_WP_nom  = ((kse_ef63 + kse_ef66  -kse_ef67 /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 ))
+
+// Intermediate without leiharbeit (when we use wage)
+replace Mb_W = ((kse_ef53 - kse_ef55  + kse_ef66 -kse_ef67   /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+replace Mb_E_W = ((kse_ef53 + kse_ef66 -kse_ef67   /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+
+replace Mb_WP_W = ((kse_ef66 -kse_ef67   /*
+*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59)/PriceM)
+
+}
+// close if long term mats drop kse_ef67
+
+
+
+gen E_Proxy = (kse_ef55 /PriceM) // Here it should be energyprice index Ç¥
+
+
+
+
+
+gen L_W_small = (kse_ef60 + kse_ef61)/PriceWage 
+
+gen L_W = (kse_ef60 + kse_ef61 + kse_ef62)/PriceWage
+
+gen L_Wb = (kse_ef60 + kse_ef61 + kse_ef62 + kse_ef63)/PriceWage 
+
+gen L_W_jbu = jbu_ef15/PriceWage
+
+
+
+
+
+
+
+//Calculate wages 
+
+log using "$savepath\freigabe\Log_Data_preparation.log", append name(Log_Data_preparation)
+//Calculate wages based on KSE and JBU
+gen Wagekse_nom = (kse_ef60 + kse_ef61 + kse_ef62)/L_FTE
+gen Wagejbu_nom = jbu_ef15/jbu_ef14
+//Compare both wages (divide and summarize them)
+gen Dif_Wagekse_Wagejbu = Wagekse_nom / Wagejbu_nom
+fdzsum  Dif_Wagekse_Wagejbu, det  
+
+// Summarize sozialkosten per lohn and per umsatz (divide and sum)
+gen sonst_Sozialkost_per_Lohn = kse_ef62/(kse_ef60 + kse_ef61)
+fdzsum sonst_Sozialkost_per_Lohn, det
+
+gen sonst_Sozialkost_per_Umsatz = kse_ef62/(kse_ef46)
+fdzsum sonst_Sozialkost_per_Umsatz, det
+
+gen Leiharbeit_per_Lohn = kse_ef63/(kse_ef60 + kse_ef61)
+fdzsum Leiharbeit_per_Lohn, det
+
+gen Leiharbeit_per_Umsatz = kse_ef63/(kse_ef46)
+fdzsum Leiharbeit_per_Umsatz, det
+
+
+log close Log_Data_preparation
+
+
+
+
+label variable Wagejbu_nom "average nominal wage from jbu data"
+label variable  Wagekse_nom "average nominal wage from kse data"
+
+
+gen Y_PE = (Absatzproduktionswert_unr/PriceErzeug)
+
+
+gen Y_P = (Absatzproduktionswert_unr/PriceFirm)
+label variable Y_P "sum(Absatzproduktionswert) from pe, roughly equivalent to kse_ef35+kse_ef43"
+gen Y_P_nom = (Absatzproduktionswert_unr)
+label variable Y_P_nom "sum(Absatzproduktionswert), nominal, from pe, roughly equivalent to kse_ef35+kse_ef43"
+
+gen Y_oth = (kse_ef38 + kse_ef39)/(PriceSonstUmsatz)
+label variable Y_oth "Revenue from renting etc./BIP deflator"
+gen Y_oth_nom = (kse_ef38 + kse_ef39)
+label variable Y_oth_nom "Nominal revenue from renting etc."
+
+gen Y_Irev = kse_ef35/PriceFirm
+label variable Y_Irev "Industrial Revenue from own Production/PriceFirm"
+gen Y_Irev_nom = kse_ef35
+label variable Y_Irev_nom "Industrial Revenue (nominal) from own Production/PriceFirm"
+
+gen Y_Grev = (kse_ef35+kse_ef37)/PriceFirm
+label variable Y_Grev "Revenue from all goods sales, own or bought/PriceFirm"
+gen Y_Grev_nom = kse_ef35+kse_ef37
+label variable Y_Grev_nom "Nominal revenue from all goods sales, own or bought"
+
+gen Y_Handel = kse_ef37/PriceFirm
+label variable Y_Handel "Revenue from sold bought goods"
+gen Y_Handel_nom = kse_ef37
+label variable Y_Handel_nom "Nominal revenue from sold bought goods"
+
+gen Y_Cap = kse_ef44/Price_Index_Invest_Ausr 
+label variable Y_Cap "Value of built Equipment/Price_Index_Equipment"
+gen Y_Cap_nom = kse_ef44 
+label variable Y_Cap_nom "Nominal value of built Equipment"
+
+gen Y_nRev = kse_ef43/PriceFirm
+label variable Y_nRev "increase in stored goods/PriceFirm"
+gen Y_nRev_nom = kse_ef43
+label variable Y_nRev_nom "increase in stored goods"
+
+gen Y_Trev = Y_Grev + Y_oth
+label variable Y_Trev "total Revenue, each component deflated differently"
+gen Y_Trev_nom = Y_Grev_nom + Y_oth_nom
+label variable Y_Trev_nom "total Revenue (nominal)"
+
+gen Y_TrevC = Y_Grev + Y_oth + Y_Cap
+label variable Y_TrevC "total Revenue plus self constructed capital, each component deflated differently"
+gen Y_TrevC_nom = Y_Grev_nom + Y_oth_nom + Y_Cap_nom
+label variable Y_TrevC_nom "total nominal Revenue plus nominal self constructed capital"
+
+gen Y_all = Y_Trev + Y_nRev + Y_Cap
+label variable Y_all "properly deflated Gesamtleistungen"
+gen Y_all_nom = Y_Trev_nom + Y_nRev_nom + Y_Cap_nom
+label variable Y_all_nom "Nominal Gesamtleistungen"
+
+gen Y_allP = Y_P + Y_Handel + Y_oth + Y_Cap 
+label variable Y_allP "properly deflated Gesamtleistungen based on Produktionserhebungsdaten"
+gen Y_allP_nom = Y_P_nom + Y_Handel_nom + Y_oth_nom + Y_Cap_nom
+label variable Y_allP_nom "Nominal Gesamtleistungen based on Produktionserhebungsdaten"
+
+gen Y_TrevCP = Y_P + Y_oth + Y_Handel + Y_Cap - Y_nRev
+label variable Y_TrevCP "Produktion based on PE minus unsold produce, plus other revenue"
+gen Y_TrevCP_nom = Y_P_nom + Y_oth_nom + Y_Handel_nom + Y_Cap_nom - Y_nRev_nom
+label variable Y_TrevCP_nom "Nominal Produktion based on PE minus nominal unsold produce, plus other nominal revenue"
+
+gen Y_allBIP = kse_ef46/ (PriceSonstUmsatz)
+label variable Y_allBIP "Gesamtleistungen deflated with BIP Deflator"
+
+gen Y_allE = kse_ef46/PriceErzeug
+label variable Y_allE "Gesamtleistungen deflated with Erzeugerpreisindex wz2"
+gen Y_allE_nom = kse_ef46 
+label variable Y_allE_nom "Gesamtleistungen nominal"
+  
+gen Y_allF = kse_ef46/PriceFirm
+label variable Y_allF "Gesamtleistungen deflated with firm price self constructed"
+gen Y_allF_nom = kse_ef46 
+label variable Y_allF_nom "Gesamtleistungen nominal"
+
+
+gen Y_all_P = Y_Grev + Y_nRev
+label variable Y_allF "Gesamtleistungen deflated with firm price self constructed"
+gen Y_all_P_nom = Y_Grev_nom +   Y_nRev_nom
+label variable Y_allF_nom "Gesamtleistungen nominal"
+
+
+
+gen Y_all4 = Y_all
+label variable Y_all4 "properly deflated Gesamtleistungen, estimation per wz4"
+gen Y_all4_nom = Y_all_nom 
+label variable Y_all4_nom "Nominal Gesamtleistungen, estimation per wz4"
+
+gen Y_allC = Y_all
+label variable Y_allC "properly deflated Gesamtleistungen, estimation per wz2 wz3 wz4"
+gen Y_allC_nom = Y_all_nom 
+label variable Y_allC_nom "Nominal Gesamtleistungen, estimation per wz2 wz3 wz4"
+
+gen Y_allL = Y_all
+label variable Y_allL "properly deflated Gesamtleistungen, estimation per wz2 wz3 wz4"
+gen Y_allL_nom = Y_all_nom 
+label variable Y_allL_nom "Nominal Gesamtleistungen, estimation per wz2 wz3 wz4"
+
+gen Y_allW = Y_all
+gen Y_allW_nom = Y_all_nom 
+
+
+
+
+
+// based on kse_ef40
+gen Y_40E = kse_ef40/PriceErzeug
+label variable Y_40E "Revenue (kse_ef40) defl by Erzeugerpreisindex"
+gen Y_40E_nom = kse_ef40 
+label variable Y_40E_nom "Revenue (ef 40) nominal"
+
+gen Y_40F = kse_ef40/PriceFirm
+label variable Y_40F "Revenue (kse_ef40) defl by firm price self constructed"
+gen Y_40F_nom = kse_ef40 
+label variable Y_40F_nom "Revenue (ef 40) nominal"
+
+gen Y_40 = Y_Trev
+label variable Y_40 "total Revenue, each component deflated differently"
+gen Y_40_nom = Y_Trev_nom 
+label variable Y_40_nom "Revenue (ef 40) nominal"
+
+
+
+// some variables do not exist before 1999. This takes care of that.
+		if $start_year_estimate < 1999  {
+
+		//intermediates
+		replace Mb_E = ((kse_ef53  + kse_ef66  /*
+		*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )/PriceM)
+		replace Mb_E_nom = (kse_ef53  + kse_ef66   /*
+		*/  + kse_ef68 + kse_ef64 + kse_ef65 + kse_ef59 )
+
+
+
+		// labor
+		
+	
+
+
+
+		}
+		// close replace loop for earlier year runs
+
+
+
+
+
+//deflate exports and preorders
+xtset unr jahr 
+gen Ex_I = Tex/kse_ef46 *100
+gen l_Ex_I = l.Ex_I
+
+replace Tex = Tex/PriceFirm
+
+xtset unr jahr
+//compute R&D investments
+gen RD_Ex = kse_ef86 //need deflator Ç¥ 
+
+
+
+gen D_RD = 1 if RD_Ex > 0 &  RD_Ex!=. 
+replace D_RD = 0 if D_RD ==. 
+
+
+if ("$Productivity_ost_west" != "YES") &  ("$SIZE_PMP_LMP" != "YES") &  "$IWH_run" != "YES"  {
+drop D_RD
+
+gen D_RD = 1 if RD_Ex > 0 &  RD_Ex!=. 
+replace D_RD = 0 if D_RD ==.   &  RD_Ex!=. 
+}
+
+
+gen D_l_RD = l.D_RD
+gen RD_l_I = l.RD_Ex/l.kse_ef46 * 100
+gen RD_I = RD_Ex/kse_ef46 * 100
+gen RD_L = kse_ef87 
+gen RD_L_I = kse_ef87/kse_ef27 * 100
+
+
+gen RD_Ex_W = RD_Ex/(kse_ef60 + kse_ef61 + kse_ef62)
+gen RD_Ex_L = (RD_Ex/PriceFirm)/L_FTE
+
+
+
+
+
+gen ValueAdded = (Y_all - Mb_E)
+
+xtset unr jahr
+
+
+
+
+
+//Delete Observations with negative Value Added
+
+count
+merge 1:m unr jahr using "$savepath\Augmented_Product_Data_GP_ID_Purged_UNR_lvl"
+drop if _merge == 2
+drop _merge
+
+//gen R&D per product line
+gen RD_NumP = kse_ef87/NumP
+
+
+gen Nace4 = substr(final_gp02,15,4)
+// gen variables of importance of the product group 
+bys unr Nace4 jahr: egen Nace4Rev = total(pe_15)
+
+gen WZ4_im = (Nace4Rev)/ Absatzproduktionswert_unr 
+set more off
+sort unr jahr
+
+
+
+
+//Bundesland
+gen BL = land_u
+egen BL_n = group(BL)
+//gen Lag of location dummy
+
+
+gen l_BL_n = l.BL_n
+
+
+
+bys unr: egen drop_min_jahr = min(jahr)
+
+
+
+
+ keep I_Proxy I_Proxy*  M* L_FTE L_W L_Wb Y_* E_Proxy B_Proxy unr jahr  RD_l_I RD_Ex RD_Ex_W RD_Ex_L RD_L RD_L_I RD_NumP PriceErzeug PriceFirm  PriceWage kse_ef46  tot_L_bnr  Tex/*
+*/ Tex NumP FirmP Firmp FirmP_market  Firmp_market      RD_I ms_f ms_Qf D_RD D_l_RD D_Exp  Wagekse_nom Wagejbu_nom Mb_E_nom  leih_arb  /*
+*/          wz_u  l_BL_n BL_n    drop_min_jahr  BL        Mb_WP_nom  Cap_soft  Cap_softpat  PriceM  Y_P Y_P_nom  Y_PE  PriceInvSonst   Y_all_P   Y_all_P_nom
+
+duplicates drop 
+
+
+
+
+compress _all
+
+save "$savepath\ProductionfunctionVariablesFirm.dta", replace
+
+}
+}
+//
+
+
+
+
+VENTMAR + PRODVEN + SUBVEXP + AUTPREX + PRODIMM + PRODSTO–(ACHAMAR + VARSTMA + ACHAMPR + VARSTMP + AUTACHA + SALTRAI + CHARSOC + IMPOTAX + AUTCHEX) + DOTAMOR + DOTPROV
+
+CATOTAL - ACHAMAR - AUTACHA - IMPOTAX - SALTBIC - CHARSOC 
+
+
+    ACHAMAR +ACHAMPR +AUTACHA +LOCACH +IMPOTAX +SALTRAI +CHARSOC +DOTAMOR +DOTPROV +AUTCHEX 
