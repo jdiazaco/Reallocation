@@ -18,7 +18,7 @@ Last update: 27/02/2025
 # 0) setup -------------------------------------------------------------------
 source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
 folder_name<-""
-output_dir<-paste0(output_dir, "Product reallocation and firm dynamics/Export 29.11/")
+output_dir<-paste0(output_dir, "2025/Export 08.05/DRS_part2/")
 output_dir_creator(output_dir)
 dummy<-F
 
@@ -567,6 +567,7 @@ ggplot(publications_by_year %>% filter(year %in% 1995:2022), aes(x=year)) +
   geom_line(aes(y=pubs_FR, color="FR")) + 
   geom_line(aes(y=pubs_WO, color="WO")) +
   geom_line(aes(y=pubs_EP, color="EP")) + 
+  geom_vline(xintercept=2010, linetype="dashed", color="black", size=0.3) +
   scale_x_continuous(breaks = (seq(1995, 2022, by=1)))+
   labs(title="Patent Grants for French Firms by Geographic Scope", y="Count", x="Year", color="Type") +
   theme_minimal()+

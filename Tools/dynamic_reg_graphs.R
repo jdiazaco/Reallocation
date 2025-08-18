@@ -13,19 +13,23 @@
 #' @author Julián Díaz-Acosta, 20/02/2025.
 #' @export
 
-dynamic_reg_graphs<-function(results, fix_eff, output_dir, graph_name){
+dynamic_reg_graphs<-function(results, fix_eff, output_dir, graph_name, n_lags_bw, n_lags_fw){
   
   results<-results %>% filter(factor!=TRUE)
   
   for (z in fix_eff) {
     
-    # z<-"firmid"
+    # z<-"NACE_BR^year"
     results_pre<- results[fix_eff==z]
+    
+    
     
     # Set the axis boundaries for graphs
     min_value<-min(unlist(results_pre[, lapply(.SD, min, na.rm=T), .SDcols = patterns("^clow")]))
     max_value<-max(unlist(results_pre[, lapply(.SD, max, na.rm=T), .SDcols = patterns("^chigh")]))
     y_lim=c(min(0, min_value), max_value)
+    
+    
     
     formulas<-unique(results_pre$x)
     
@@ -34,15 +38,18 @@ dynamic_reg_graphs<-function(results, fix_eff, output_dir, graph_name){
       formula<-formulas[i]
       
       # Filter only observations 
-      setDT(results_temp)
+      setDT(results_pre)
       results_temp<-results_pre[x==formula]
+      plot_list<-list()
+      
       
       # Keep only the names of the dataset that represent coefficient point estimates
       inform_vars<-c("k", "factor", "variable", "filter", "fix_eff", "digit", "x", "nobs")
       x_names<-names(results_temp)[!grepl("^(chigh|clow)", names(results_temp))]
       x_names<-x_names[!(x_names %in% inform_vars)]
       
-      plot_list<-list()
+      
+      
       
       for(j in 1:length(x_names)){
         # name<-x_names[1]
@@ -74,11 +81,17 @@ dynamic_reg_graphs<-function(results, fix_eff, output_dir, graph_name){
                x="k",
                y=paste0("Coefficient"))
         
+        
+        
         plot_list[[paste0(z, "_", name)]]<-temp
         
         # Create row of plots. Keep the label of the y axis only for the most left plot. Kepp the legend box only for the most right plot
         if(j==1){
-          plot_row<-(plot_list[[j]]  +  theme(axis.title.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none"))
+          if(j==length(x_names)){
+            plot_row<-(plot_list[[j]])
+          }else{
+            plot_row<-(plot_list[[j]]  +  theme(axis.title.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none"))
+          }
         }else{
           if(j!=length(x_names)){
             plot_row<-plot_row+(plot_list[[j]] + theme(axis.title.y=element_blank(), axis.title.x = element_blank(), axis.ticks.x = element_blank(), legend.position ="none" ))
@@ -107,8 +120,7 @@ dynamic_reg_graphs<-function(results, fix_eff, output_dir, graph_name){
       }
       
     }
-    
-    ggsave( paste0(output_dir, graph_name, "_", gsub("\\*|\\+|\\^", "_", z), ".png"), final_plot, height = length(formulas)*2.5, width = length(x_names)*2.5)
+    ggsave( paste0(output_dir, graph_name, "_", gsub("\\*|\\+|\\^", "_", z), ".png"), final_plot, height = max(length(formulas)*2.5, 5), width = max(length(x_names)*2.5, 10))
     
   }
   

@@ -90,7 +90,6 @@ static_reg_reallocation<-function(data, y, x, fix_eff, weight_var, disag_var, k,
       
       if(mfx_cond){
         # ## START MESS
-        stop()
         contrast_baseline<-levels(data[[contrast_var]])[1]
         contrast_levels<-levels(data[[contrast_var]])[-1]
         contrasts<-c(contrast_baseline, contrast_levels)

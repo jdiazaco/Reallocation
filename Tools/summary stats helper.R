@@ -48,47 +48,47 @@ make_summary_stats = function(data_frame, interest_vars, sub_groups, output_name
     output = cbind(rbind(means, sd, na_inf, empty, p10, p90), n_distinct, sample_size) %>% mutate(sample = sub_groups[i])
     }
   ))
-  write.xlsx(table_1, paste0(output_dir, output_name, '.xlsx'), rowNames = F)
+  # write.xlsx(table_1, paste0(output_dir, output_name, '.xlsx'), rowNames = F)
   
-  file_conn = file(paste0(output_dir, output_name, '.tex'), 'w')
-  ##preamble = '\\documentclass{article}\n\\begin{document}\n'
-  column_format = paste0('l ', paste(rep('c', length(sub_groups)), collapse = " "))
-  column_heads = paste0(' & ', paste(sub_groups, collapse = ' &'))
-  table_head = paste0('\\begin{table}[h]\n\\centering\n\\begin{tabular}{',
-                      column_format, '}\n\\hline\n',column_heads, '\\\\\n\\hline\n'
-  )
-
-  #cat(preamble, file = file_conn)
-  cat(table_head, file = file_conn)
-  for (j in seq_along(interest_vars)){
-    for (k in seq_along(sub_groups)){
-      k_mean =  round(table_1 %>% filter(sample == sub_groups[k], var == 'mean') %>% pull(interest_vars[j]),2)
-      k_sd =   round(table_1 %>% filter(sample == sub_groups[k], var == 'sd') %>% pull(interest_vars[j]),2)
-      j_sample_size = table_1 %>% filter(sample == sub_groups[k], var == 'mean') %>% pull(sample_size)
-
-      if (k == 1){
-        value_row =paste0(interest_vars[j], ' & ', k_mean)
-        sd_row = paste0(' & (', k_sd, ")")
-        sample_size = paste0('sample size & ', j_sample_size)
-
-      } else{
-        value_row = paste0(value_row, ' & ', k_mean)
-        sd_row = paste0(sd_row,' & (', k_sd, ") ")
-        sample_size = paste0(sample_size,' & ',  j_sample_size)
-      }
-    }
-    value_row = paste0(value_row, '\\\\'); sd_row = paste0(sd_row, '\\\\')
-    blank_row = paste0(paste(rep('&', length(sub_groups)), collapse = " "),'\\\\')
-
-    cat(value_row, file = file_conn, sep = '\n'); cat(sd_row, file = file_conn, sep = '\n')
-    cat(blank_row, file = file_conn, sep = '\n')
-  }
-
-  cat(paste0(sample_size,'\\\\'), file = file_conn, sep = '\n')
-  cat('\\hline\n\\end{tabular}\n\\end{table}', file = file_conn)
-
-  #cat('\\end{document}\n', file = file_conn)
-  close(file_conn)
+  # file_conn = file(paste0(output_dir, output_name, '.tex'), 'w')
+  # ##preamble = '\\documentclass{article}\n\\begin{document}\n'
+  # column_format = paste0('l ', paste(rep('c', length(sub_groups)), collapse = " "))
+  # column_heads = paste0(' & ', paste(sub_groups, collapse = ' &'))
+  # table_head = paste0('\\begin{table}[h]\n\\centering\n\\begin{tabular}{',
+  #                     column_format, '}\n\\hline\n',column_heads, '\\\\\n\\hline\n'
+  # )
+  # 
+  # #cat(preamble, file = file_conn)
+  # cat(table_head, file = file_conn)
+  # for (j in seq_along(interest_vars)){
+  #   for (k in seq_along(sub_groups)){
+  #     k_mean =  round(table_1 %>% filter(sample == sub_groups[k], var == 'mean') %>% pull(interest_vars[j]),2)
+  #     k_sd =   round(table_1 %>% filter(sample == sub_groups[k], var == 'sd') %>% pull(interest_vars[j]),2)
+  #     j_sample_size = table_1 %>% filter(sample == sub_groups[k], var == 'mean') %>% pull(sample_size)
+  # 
+  #     if (k == 1){
+  #       value_row =paste0(interest_vars[j], ' & ', k_mean)
+  #       sd_row = paste0(' & (', k_sd, ")")
+  #       sample_size = paste0('sample size & ', j_sample_size)
+  # 
+  #     } else{
+  #       value_row = paste0(value_row, ' & ', k_mean)
+  #       sd_row = paste0(sd_row,' & (', k_sd, ") ")
+  #       sample_size = paste0(sample_size,' & ',  j_sample_size)
+  #     }
+  #   }
+  #   value_row = paste0(value_row, '\\\\'); sd_row = paste0(sd_row, '\\\\')
+  #   blank_row = paste0(paste(rep('&', length(sub_groups)), collapse = " "),'\\\\')
+  # 
+  #   cat(value_row, file = file_conn, sep = '\n'); cat(sd_row, file = file_conn, sep = '\n')
+  #   cat(blank_row, file = file_conn, sep = '\n')
+  # }
+  # 
+  # cat(paste0(sample_size,'\\\\'), file = file_conn, sep = '\n')
+  # cat('\\hline\n\\end{tabular}\n\\end{table}', file = file_conn)
+  # 
+  # #cat('\\end{document}\n', file = file_conn)
+  # close(file_conn)
   
   ### Horizontal descriptives
   

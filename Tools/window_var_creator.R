@@ -23,7 +23,7 @@
 #' @export
 
 
-window_var_cretor<-function(data, unit_var, time_var, target_var, window_length, result_var_name, na_rm){
+window_var_cretor<-function(data, unit_var, time_var, target_var, window_length_bw, window_length_fw=0, result_var_name, na_rm){
   do.call(setorder, c(list(data), as.list(unit_var, time_var)))
   
   # data[, (result_var_name):=as.integer(Reduce(`|`, shift(get(target_var)>0, 0:window_length, type="lag", fill=0))), by=get(unit_var)]
@@ -31,9 +31,9 @@ window_var_cretor<-function(data, unit_var, time_var, target_var, window_length,
     # sapply(year, function(y) any(get(target_var)[year >= (y-window_length) & year <= y]>0, na.rm = T))
     sapply(year, function(y) 
       if(na_rm){
-        any(get(target_var)[year >= (y-window_length) & year <= y]>0, na.rm = T)
+        any(get(target_var)[year >= (y-window_length_bw) & year <= y+window_length_fw]>0, na.rm = T)
       }else{
-        any(get(target_var)[year >= (y-window_length) & year <= y]>0)
+        any(get(target_var)[year >= (y-window_length_bw) & year <= y+window_length_fw]>0)
       }
     )
   ), by=get(unit_var)]

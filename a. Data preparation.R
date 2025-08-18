@@ -31,9 +31,9 @@ Last update: 14/10/2024
 
 # setup -------------------------------------------------------------------
 source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
-output_dir<-paste0(output_dir, "Product reallocation and firm dynamics/Export 25.10/")
+output_dir<-paste0(output_dir, "2025/Export 22.05/")
 output_dir_creator(output_dir)
-dummy<-T
+dummy<-F
 
 #0) Import Business Registry / SBS data -------------------------------------------------------------------------
 # import both datasets then filter BR data by whether it is in SBS,
@@ -327,28 +327,16 @@ sbs_data <- sbs_data %>% mutate(firm_birth_year=ifelse(firm_birth_year==0, NA, f
                                 NACE_BR=str_pad(NACE_BR, 4, side="left", pad="0"),
                                 NACE_2d=substr(NACE_BR, 1,2))
 
-test<-sbs_data[, c("firmid", "year", "birth_year", "firm_birth_year")]
-# test<-sbs_data[, c("firmid", "year", "birth_year", "firm_birth_year", "firm_age")]
-
 
 sbs_data[, young:=ifelse(is.na(firm_age), NA, ifelse(firm_age<=5, 1, 0))]
 
 
 # Bring in Alex's linkedin data
-# linkedin = read_parquet('french_affiliated_firm_roles_collapsed_clean.parquet') 
-# test<-data.table(firmid=unique(linkedin$firmid), number=seq_len(length(unique(linkedin$firmid))))
-# test2<-data.table(number=unique(sbs_data$firmid))
-# test<-merge(test2, test, all.x=T, by="number")
-# linkedin<-merge(test, linkedin,  by="firmid", all.x = T)
-# linkedin$firmid<-linkedin$number
-# linkedin$number<-NULL
-# write_parquet(linkedin, "french_affiliated_firm_roles_collapsed_clean.parquet")
 linkedin = read_parquet('french_affiliated_firm_roles_collapsed_clean.parquet') %>%
   select(-c(rcid, `__index_level_0__`)) 
 sbs_data <- merge(sbs_data, linkedin, by=c("firmid", "year"), all.x=T)
 sbs_data <- sbs_data[, log_emp_rnd:=log(emp_rnd)]
 sbs_data[, log_emp_rnd:=ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
-
 
 # Juli?n: Only firmid, year, nace information
 NACE_BR_data<-sbs_data[, c("firmid", "year", "NACE_BR", "NACE_2d")]
@@ -357,9 +345,11 @@ NACE_BR_data<-sbs_data[, c("firmid", "year", "NACE_BR", "NACE_2d")]
 birth_death = unique(sbs_data %>% select(firmid, birth_year, death_year))
 active_firm_list = sbs_data[year <= death_year | is.na(death_year)] %>% select(firmid, year)
 
-#Remove outliers
-# outlier_threshold<-0.01
-# sbs_data<-outliers_remove(sbs_data, outlier_threshold)
+# Create market share measures
+sbs_data[, within_industry_rev_share :=  nq_bar/ sum(nq_bar, na.rm = T),
+             by = .(NACE_BR, year)]
+sbs_data[, within_economy_rev_share_BR :=  nq_bar/ sum(nq_bar, na.rm = T),
+         by = .(year)]
 
 
 saveRDS(sbs_data, 'sbs_br_combined_cleaned.rds')
@@ -383,22 +373,25 @@ only_prodfra_in_prodcom<-FALSE
 parameters(prodfra_or_pcc8, only_prodfra_in_prodcom)
 
 ##import supplementary data
-harmonized_prodfra = fread(paste0('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/2 Data/product_harmonization_output/harmonized codes/prodfra_harmonized_2009to2022_', prodfra_or_pcc8, '.csv'))
+harmonized_prodfra = fread(paste0('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/2 Data/product_harmonization_output/harmonized codes/prodfra_harmonized_2009to2023_', prodfra_or_pcc8, '.csv'))
 active_firm_list = readRDS('active_firm_list.rds')
 birth_death = readRDS('firm_birth_death.rds') 
 #Juli?n: Pc8_entry_year
 PC8_entry_year <- fread('PC8_years_entry/PC8_prodfra_years_entry.csv', select=c("codes", "code_entry_year"))
+unit_collapsed <- fread("~/Reallocation/6 Publish/1 Code/Ancillary datasets/unit_collapsed.csv")
+unit_collapsed_M2<-unit_collapsed %>% mutate(unit_obv="M2")
+unit_collapsed<-unique(rbind(unit_collapsed, unit_collapsed_M2)); rm(unit_collapsed_M2);gc()
 
 ## import the prodcom data + harmonize product codes 
 start = 2009
-end = 2022
+end = 2023
 
 product_data = rbindlist(lapply(c(start:end),function(yr){
-  # yr<-2020
+  # yr<-2022
   print(yr)
   # import product data 
   # filepath = paste0(raw_dir,'prodcom/prodcom',yr,'.csv')
-  filepath = paste0('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Raw_data/Data/prodcom/prodcom',yr, '.csv')
+  filepath = paste0('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Raw_data/Data/prodcom/new_2025/eap',yr, '_pp.csv')
   dta_temp = fread(filepath)
   dta_temp[, firmid := as.character(firmid)]
   dta_temp[, pcc8 := as.character(pcc8)]
@@ -425,12 +418,13 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   
   #Juli?n: Merge information about the year of codes' first appearance in harmonized PC8 tables
   dta_temp = merge(dta_temp, PC8_entry_year, by.x = 'pcc8', by.y = "codes", all.x = T)
-  
+
   # collapse data to firm-prodfra_plus level
-  dta_temp = dta_temp[, .(rev = sum(rev, na.rm = T), code_entry_year=min(code_entry_year)),
-                      by= .(firmid, prodfra_plus, year)]#, code_entry_year)]
-  table(dta_temp$code_entry_year)
-  
+  dta_temp = dta_temp[, .(rev = sum(rev, na.rm = T), 
+                          code_entry_year=min(code_entry_year), 
+                          sold_q=sum(sold_q, na.rm = T)),
+                      by= .(firmid, prodfra_plus, year, unit)]#, code_entry_year)]
+
   #generate product-HHI variable
   dta_temp[, total_rev := sum(rev, na.rm = T), by = firmid]
   dta_temp[,HHI := ifelse(total_rev > 0, sum((rev/total_rev)^2),NA), by = firmid]
@@ -439,6 +433,11 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   ## generate active status marker
   dta_temp[,active := 1]
 }))
+
+# Adjust units 
+product_data[, unit_collapsed:=paste(unique(unit[!is.na(unit) & unit!="M2"]), collapse=","), by=.(firmid,prodfra_plus)]
+product_data<-merge(product_data, unit_collapsed, by.x=c("unit_collapsed", "unit"), by.y=c("unit_collapsed", "unit_obv"), all.x = T)
+product_data[, sold_q:=sold_q*factor]
 
 saveRDS(product_data, paste0("product_data_", filter_indicator,  "_.RDS"))
 
@@ -452,7 +451,7 @@ parameters(prodfra_or_pcc8, only_prodfra_in_prodcom)
 
 # Set start and end years
 start = 2009
-end = 2022
+end = 2023
 
 #Bring in product_data
 product_data<-readRDS(paste0("product_data_", filter_indicator,  "_.RDS"))
@@ -476,25 +475,9 @@ parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
 if(exclude_industries){
   ind_to_exclude <- c(19, 35,36,37,38,39,46) 
   
-  
-  # products_excluded_sectors<-product_data %>% filter(substr(NACE, 1, 2) %in% ind_to_exclude)
-  # products_excluded_sectors<-unique(products_excluded_sectors$firmid)
-  # 
-  # firms_excluded_sectors<-product_data %>% filter(NACE_2d %in% ind_to_exclude)
-  # firms_excluded_sectors<-unique(firms_excluded_sectors$firmid)
-  # 
-  # firms_excluded_sectors_wo_excluded_products<-setdiff(firms_excluded_sectors, products_excluded_sectors)
-  # test<-product_data %>% filter(firmid %in% firms_excluded_sectors_wo_excluded_products)
-  # 
-  # length(setdiff(products_excluded_sectors, firms_excluded_sectors)) 
-  # length(setdiff(firms_excluded_sectors, products_excluded_sectors)) 
-  
-  
   # Exclude firms and product lines in industries if the parameter is set above
   product_data<-product_data %>% filter(!(substr(NACE, 1, 2) %in% ind_to_exclude),
                                         !(NACE_2d %in% ind_to_exclude))
-  # product_data<-product_data %>% filter(!(substr(NACE, 1, 2) %in% ind_to_exclude))
-  
 }
 
 # Deflate prodcom revenue data using industry deflators
@@ -604,6 +587,7 @@ product_data<-readRDS(paste0("product_data_", filter_indicator,  "_.RDS"))
 product_data[, cpa:=substr(prodfra_plus, 1, 6)]
 test<-product_data[, .(prodfra_plus=unique(prodfra_plus)), by=.(cpa)]
 #test<-test[, .(n=.N), by=.(cpa)] #1405 cpa codes
+# product_data<-product_data[, n_units:=n_distinct(unit), by=.(firmid, year, cpa, active)]
 product_data<-product_data[, .(rev=sum(rev, na.rm=T)), by=.(firmid, year, cpa, active)]
 
 

@@ -87,6 +87,7 @@ firm_data_select<-readRDS("sbs_br_combined_cleaned.rds") %>% select(firmid, year
                                                                     capital, capital_l, capital_bar, capital_growth, 
                                                                     tfp, tfp_l, tfp_bar, tfp_growth,
                                                                     labor_cost, raw_materials, 
+                                                                    within_industry_rev_share, within_economy_rev_share_BR,
                                                                     # t_l, t_k, t_m,
                                                                     nq_capital, nq_raw_materials, nq_empl,
                                                                     born, died, size, young,

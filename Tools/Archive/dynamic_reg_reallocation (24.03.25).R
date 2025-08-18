@@ -27,7 +27,7 @@
 #' @export
 
 
-dynamic_reg_reallocation<-function(data, y, x, fix_eff, weight_var=NULL, disag_var, n_lags_bw, n_lags_fw){
+dynamic_reg_reallocation<-function(data, y, x, fix_eff, weight_var, disag_var, n_lags_bw, n_lags_fw){
   
   
   # digit<-"6"
@@ -64,32 +64,24 @@ dynamic_reg_reallocation<-function(data, y, x, fix_eff, weight_var=NULL, disag_v
       if(!(x_adj[i] %in% names(data))){ # Detect interaction
         if(grepl("\\*", x_adj[i])){
           temp_vect<-str_split(x_adj[i], "\\*") # Check if each of the terms of the interaction exist and create if not
-          temp_vect_non_adj<-str_split(x[i], "\\*") # Check if each of the terms of the interaction exist and create if not
-          
           if(!(temp_vect[[1]][1] %in% names(data))){
-            data<-lead_lag_creator(data, temp_vect_non_adj[[1]][1], max(n_lags_bw, n_lags_fw))
+            product_summary<-lead_lag_creator(product_summary, temp_vect[[1]][1], max(n_lags_bw, n_lags_fw))
           } 
           if(!(temp_vect[[1]][3] %in% names(data))){
-            data<-lead_lag_creator(data, temp_vect_non_adj[[1]][2], max(n_lags_bw, n_lags_fw))
+            product_summary<-lead_lag_creator(product_summary, temp_vect[[1]][2], max(n_lags_bw, n_lags_fw))
           } 
         }else{
-          data<-lead_lag_creator(data, x[i], max(n_lags_bw, n_lags_fw))
+          product_summary<-lead_lag_creator(product_summary, x[i], max(n_lags_bw, n_lags_fw))
         }
       }
     }
 
     for (fe in fix_eff) {
       # Store weights in a vector
-      if(is.null(weight_var)){
-        weight_data<-NULL
-      }else{
-        weight_data<-data[[paste0(weight_var)]]
-      }
+      weight_data<-data[[paste0(weight_var)]]
 
       # First get the results for all firms, later you can disaggregate by other variables
-      results_all<-regression_reallocation_growth(data, y, x_adj, fe, weight_data = weight_data, "all", "all", k)
-      results_all[,`:=`(x=paste0(y, " = ", paste(x, collapse ="+")))]
-      results<-rbind(results, results_all, fill=T)
+      results<-rbind(results, regression_reallocation_growth(data, y, x_adj, fe, weight_data = weight_data, "all", "all", k), fill=T)
       
       # Now get the results disaggregating by other variables (normally size and age and their interactions, but could be others)
       for(variable in disag_var){
@@ -100,14 +92,11 @@ dynamic_reg_reallocation<-function(data, y, x, fix_eff, weight_var=NULL, disag_v
         
         for(filter in filters){
           
+          # Keep only obs with the specified filters
           data_temp<-data[get(variable)==filter]
           
           # Store weights in a vector
-          if(is.null(weight_var)){
-            weight_data<-NULL
-          }else{
-            weight_data<-data_temp[[paste0(weight_var)]]
-          }
+          weight_data<-data_temp[[paste0(weight_var)]]
           
           # Run regressions
           results_temp<-regression_reallocation_growth(data=data_temp, 
@@ -118,10 +107,6 @@ dynamic_reg_reallocation<-function(data, y, x, fix_eff, weight_var=NULL, disag_v
                                                        category=variable,
                                                        filter=filter,
                                                        t_k=k)
-          
-          
-          results_temp[,`:=`(x=paste0(y, " = ", paste(x, collapse ="+")))]
-          
           results<-rbind(results, results_temp, fill=T)
 
         }

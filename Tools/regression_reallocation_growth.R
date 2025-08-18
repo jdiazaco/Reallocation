@@ -77,6 +77,8 @@ regression_reallocation_growth<-function(data, y, x, fix_eff,  weight_data, cate
       conf_low_var<-paste0("clow_", var)
       results_temp[, (conf_low_var):=conf[1,1]]
       results_temp[, nobs:=regression$nobs]
+      # results_temp[, x:=paste0(y, " ~ ", paste(x, collapse = " + "))]
+      
       
     }
   }else{
@@ -86,6 +88,7 @@ regression_reallocation_growth<-function(data, y, x, fix_eff,  weight_data, cate
       variable=category,
       filter=filter,
       fix_eff=fix_eff)
+      # x=paste0(y, " ~ ", paste(x, collapse = " + ")))
   }
   
   
