@@ -1,0 +1,78 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{pdflscape}
+\usepackage{comment}
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{placeins} 
+\usepackage{tabularray}
+\usepackage[table]{xcolor}
+\UseTblrLibrary{booktabs}
+
+\newcolumntype{d}{S[
+    input-open-uncertainty=,
+    input-close-uncertainty=,
+    parse-numbers = false,
+    table-align-text-pre=false,
+    table-align-text-post=false
+ ]}
+\usepackage[paperwidth=225mm, paperheight=330mm, margin=0.7in]{geometry}
+
+\begin{document}
+
+
+
+\section{Product Decisions of Young Firms}
+
+Are there differences in the product and patenting decisions of high-growth young firms that separates them from other young firms? I take the subsample of all firm-year observations that are classified as young (5 year threshold) when covered by the EAP. I create variable $D^{HG}_{ikt}$ equal to 1 if the firm is in the top 30\% of employment or revenue growth across the subsample of young firms in a given year and 0 otherwise. 
+
+Table \ref{tab: summary_stats_top_growth_empl_growth} presents summary statistics of high-growth young firms, defined by employment and revenue growth, respectively. High growth young firms have fewer employees and revenue than non-high-growth young firms. On average they have higher patenting and trademarking rates.
+
+To capture the relation between firm growth and the product decisions of high-growth young firms, we run the following regression:
+    
+
+\[
+Y_{ikt} =  \beta^N D^N_{ik\hat{t}} + \beta^X D^X_{ik\hat{t}} + \sum_{I \in \{P, TM\}} \left( \beta^I D^I_{ik\hat{t}} + \beta^{I \times N} \left( D^I_{ik\hat{t}} \times D^N_{ik\hat{t}} \right) \right) + X_{ik\hat{t}} + \alpha_k + \alpha_t + \varepsilon_{ikt}.
+\]
+
+
+Where $Y_{ikt}$ can be either $D^{HG}_{ikt}$ or employment or revenue growth rate. $D_{ikt}$ are dummy indicators for firm $i$ in industry $k$ and time $\hat{t}\in [t-2,t]$. $N$ is net product creation, meaning whether the difference in the number of products introduced and destroyed by a firm in a year is positive. $X$ is product destruction, meaning whether the difference  in the number of products introduced and destroyed by a firm in a year is negative. $P$ is whether the firm patented. $TM$ is whether the firm introduced a trademark. $\alpha_{k}$ and $\alpha_{t}$ are industry and time fixed effects, respectively.  I run each regression separately for the sample of small, medium and large firms. All regressions are weighted by average employment or revenue, depending on the dependent variable.
+
+
+\input{empl/young/0.3/top_growth/summary_stats_top_growth_empl_growth_0.3_horizontal}
+\FloatBarrier
+
+
+
+Patenting without introducing new products in the previous two years is correlated with a higher likelihood of being a high growth young firm for small and medium firms. Patenting without introducing new products in the previous two years is correlated with an additional 3,9\% employment growth and 5,5\% employment growth for large firms. Dropping product lines is correlated with a lower likelihood of being a high growth young firm for large firms and a 12,9\% lower employment growth rate.  Other variables are not significant or are not robust to including industry and time fixed effects.
+
+
+\input{empl/young/0.3/top_growth/regressions_top_growth_size_NACE_BR + year}
+
+\input{empl/young/0.3/empl_growth/regressions_empl_growth_size_NACE_BR + year}
+\input{nq/young/0.3/nq_growth/regressions_nq_growth_size_NACE_BR + year}
+%\FloatBarrier
+
+
+%\section{Product Decisions of Mature Superstar Firms}
+%To capture the relation between firm growth and the product decisions of high-growth young firms, we run the following regression:
+    
+%\[
+%Y_{ikt} =  \beta^N D^N_{ik\hat{t}} + \beta^X D^X_{ik\hat{t}} + \sum_{I \in \{P, TM\}} \left( \beta^I D^I_{ik\hat{t}} + \beta^{I \times N} \left( D^I_{ik\hat{t}} \times D^N_{ik\hat{t}} \right) \right) \times D^{SS}_{ikt} + X_{ik\hat{t}} + \alpha_k + \alpha_t + \varepsilon_{ik\hat{t}}.
+%\]
+
+%Superstar firms are significatly more responsive in employment growth when they have patented and introduced new products at the same time. This possitive correlation is present and significant among medium and large firms. However, this differential correlation is not significant in revenue growth.
+
+
+%\input{empl/mature/empl_growth/reg_1_NACE_BR + year}
+
+
+%\input{nq/mature/nq_growth/reg_1_NACE_BR + year}
+
+%\input{empl/mature/empl_growth/regressions_empl_growth_size_NACE_BR + year}
+%\input{nq/mature/nq_growth/regressions_nq_growth_size_NACE_BR + year}
+
+\end{document}
