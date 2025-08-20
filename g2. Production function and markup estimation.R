@@ -75,7 +75,20 @@ df[, `:=`(
   ln_L_K = ln_L * ln_K,
   ln_L_M = ln_L * ln_M,
   ln_K_M = ln_K * ln_M,
-  ln_L_K_M = ln_L * ln_K * ln_M
+  ln_L_K_M = ln_L * ln_K * ln_M,
+  # Cubic and mixed third-order terms
+  ln_L3 = ln_L^3,
+  ln_K3 = ln_K^3,
+  ln_M3 = ln_M^3,
+  ln_L_K2 = ln_L * ln_K^2,
+  ln_L_M2 = ln_L * ln_M^2,
+  ln_K_M2 = ln_K * ln_M^2,
+  ln_L2_K = ln_L^2 * ln_K,
+  ln_L2_M = ln_L^2 * ln_M,
+  ln_K2_M = ln_K^2 * ln_M,
+  ln_L2_K_M = ln_L^2 * ln_K * ln_M,
+  ln_L_K2_M = ln_L * ln_K^2 * ln_M,
+  ln_L_K_M2 = ln_L * ln_K * ln_M^2
 )]
 
 # Price interaction terms
@@ -89,16 +102,35 @@ df[, `:=`(
   priceLM  = pf * ln_L * ln_M,
   priceLK  = pf * ln_L * ln_K,
   priceMK  = pf * ln_M * ln_K,
-  priceLMK = pf * ln_L * ln_M * ln_K
+  priceLMK = pf * ln_L * ln_M * ln_K,
+  priceL3  = pf * ln_L3,
+  priceK3  = pf * ln_K3,
+  priceM3  = pf * ln_M3,
+  priceLK2 = pf * ln_L_K2,
+  priceLM2 = pf * ln_L_M2,
+  priceKM2 = pf * ln_K_M2,
+  priceL2K = pf * ln_L2_K,
+  priceL2M = pf * ln_L2_M,
+  priceK2M = pf * ln_K2_M,
+  priceL2KM = pf * ln_L2_K_M,
+  priceLK2M = pf * ln_L_K2_M,
+  priceLKM2 = pf * ln_L_K_M2
 )]
 
 # Lagged instruments
-lag_vars <- c("ln_L", "ln_L2", "ln_K", "ln_K2", "ln_L_K",
-              "ln_M", "ln_M2", "ln_K_M", "ln_L_M", "ln_L_K_M",
+lag_vars <- c("ln_L", "ln_L2", "ln_L3", "ln_K", "ln_K2", "ln_K3",
+              "ln_L_K", "ln_L_K2", "ln_L2_K",
+              "ln_M", "ln_M2", "ln_M3", "ln_K_M", "ln_L_M", "ln_K_M2",
+              "ln_L2_M", "ln_L_M2", "ln_K2_M", "ln_L2_K_M", "ln_L_K2_M",
+              "ln_L_K_M2",
               "pf", "Rshare",
               "priceL", "priceK", "priceM",
               "priceL2", "priceK2", "priceM2",
-              "priceLM", "priceLK", "priceMK", "priceLMK")
+              "priceL3", "priceK3", "priceM3",
+              "priceLM", "priceLK", "priceMK", "priceLMK",
+              "priceLK2", "priceLM2", "priceKM2",
+              "priceL2K", "priceL2M", "priceK2M",
+              "priceL2KM", "priceLK2M", "priceLKM2")
 for (v in lag_vars) {
   df[, paste0("l_", v) := shift(get(v)), by = firmid]
 }
@@ -109,17 +141,25 @@ for (v in lag_vars) {
 # The specification mirrors the Stata implementation using a translog
 # production function with materials treated as an endogenous input.
 
-iv_formula <- ln_Y ~ ln_L + ln_L2 + ln_K + ln_K2 + ln_L_K +
-  ln_M + ln_M2 + ln_K_M + ln_L_M + ln_L_K_M +
+iv_formula <- ln_Y ~ ln_L + ln_L2 + ln_L3 + ln_K + ln_K2 + ln_K3 + ln_L_K +
+  ln_L_K2 + ln_L2_K +
+  ln_M + ln_M2 + ln_M3 + ln_K_M + ln_L_M + ln_K_M2 + ln_L2_M + ln_L_M2 + ln_K2_M +
+  ln_L_K_M + ln_L2_K_M + ln_L_K2_M + ln_L_K_M2 +
   pf + Rshare +
   priceL + priceK + priceM +
   priceL2 + priceK2 + priceM2 +
-  priceLM + priceLK + priceMK + priceLMK | 
-  l_ln_M + l_ln_M2 + l_ln_K + l_ln_L +
+  priceL3 + priceK3 + priceM3 +
+  priceLM + priceLK + priceMK + priceLMK +
+  priceLK2 + priceLM2 + priceKM2 + priceL2K + priceL2M + priceK2M +
+  priceL2KM + priceLK2M + priceLKM2 |
+  l_ln_M + l_ln_M2 + l_ln_M3 + l_ln_K + l_ln_L +
   l_pf + l_Rshare +
   l_priceL + l_priceK + l_priceM +
   l_priceL2 + l_priceK2 + l_priceM2 +
-  l_priceLM + l_priceLK + l_priceMK + l_priceLMK
+  l_priceL3 + l_priceK3 + l_priceM3 +
+  l_priceLM + l_priceLK + l_priceMK + l_priceLMK +
+  l_priceLK2 + l_priceLM2 + l_priceKM2 + l_priceL2K + l_priceL2M + l_priceK2M +
+  l_priceL2KM + l_priceLK2M + l_priceLKM2
 
 iv_vars <- all.vars(iv_formula)
 reg_data <- df[complete.cases(df[, ..iv_vars])]
@@ -147,7 +187,19 @@ reg_data[, w_con :=
   coefs["priceLM"]  * priceLM  +
   coefs["priceLK"]  * priceLK  +
   coefs["priceMK"]  * priceMK  +
-  coefs["priceLMK"] * priceLMK ]
+  coefs["priceLMK"] * priceLMK +
+  coefs["priceL3"]   * priceL3   +
+  coefs["priceM3"]   * priceM3   +
+  coefs["priceK3"]   * priceK3   +
+  coefs["priceLK2"]  * priceLK2  +
+  coefs["priceLM2"]  * priceLM2  +
+  coefs["priceKM2"]  * priceKM2  +
+  coefs["priceL2K"]  * priceL2K  +
+  coefs["priceL2M"]  * priceL2M  +
+  coefs["priceK2M"]  * priceK2M  +
+  coefs["priceL2KM"] * priceL2KM +
+  coefs["priceLK2M"] * priceLK2M +
+  coefs["priceLKM2"] * priceLKM2 ]
 
 # Adjust inputs by the price component
 reg_data[, mat_adj := ln_M - w_con]
@@ -157,30 +209,66 @@ reg_data[, kap_adj := ln_K - w_con]
 b <- coefs
 b_ln_L        <- b["ln_L"]
 b_ln_L2       <- b["ln_L2"]
+b_ln_L3       <- b["ln_L3"]
 b_ln_K        <- b["ln_K"]
 b_ln_K2       <- b["ln_K2"]
+b_ln_K3       <- b["ln_K3"]
 b_ln_L_K      <- b["ln_L_K"]
+b_ln_L_K2     <- b["ln_L_K2"]
+b_ln_L2_K     <- b["ln_L2_K"]
 b_ln_M        <- b["ln_M"]
 b_ln_M2       <- b["ln_M2"]
+b_ln_M3       <- b["ln_M3"]
 b_ln_K_M      <- b["ln_K_M"]
+b_ln_K_M2     <- b["ln_K_M2"]
+b_ln_L2_M     <- b["ln_L2_M"]
+b_ln_L_M2     <- b["ln_L_M2"]
+b_ln_K2_M     <- b["ln_K2_M"]
 b_ln_L_M      <- b["ln_L_M"]
 b_ln_L_K_M    <- b["ln_L_K_M"]
+b_ln_L2_K_M   <- b["ln_L2_K_M"]
+b_ln_L_K2_M   <- b["ln_L_K2_M"]
+b_ln_L_K_M2   <- b["ln_L_K_M2"]
 
 # Output elasticities following the Stata formulas
 reg_data[, elas_mat := b_ln_M + 2 * b_ln_M2 * mat_adj +
                       b_ln_K_M * kap_adj +
                       b_ln_L_M * ln_L +
-                      b_ln_L_K_M * ln_L * kap_adj]
+                      b_ln_L_K_M * ln_L * kap_adj +
+                      3 * b_ln_M3 * mat_adj^2 +
+                      b_ln_L2_M * ln_L^2 +
+                      b_ln_K2_M * kap_adj^2 +
+                      2 * b_ln_L_M2 * mat_adj * ln_L +
+                      2 * b_ln_K_M2 * mat_adj * kap_adj +
+                      b_ln_L2_K_M * ln_L^2 * kap_adj +
+                      b_ln_L_K2_M * ln_L * kap_adj^2 +
+                      2 * b_ln_L_K_M2 * ln_L * kap_adj * mat_adj]
 
 reg_data[, elas_lab := b_ln_L + 2 * b_ln_L2 * ln_L +
                       b_ln_L_K * kap_adj +
                       b_ln_L_K_M * mat_adj * kap_adj +
-                      b_ln_L_M * mat_adj]
+                      b_ln_L_M * mat_adj +
+                      3 * b_ln_L3 * ln_L^2 +
+                      2 * b_ln_L2_K * ln_L * kap_adj +
+                      2 * b_ln_L2_M * ln_L * mat_adj +
+                      b_ln_L_K2 * kap_adj^2 +
+                      b_ln_L_M2 * mat_adj^2 +
+                      2 * b_ln_L2_K_M * ln_L * kap_adj * mat_adj +
+                      b_ln_L_K2_M * kap_adj^2 * mat_adj +
+                      b_ln_L_K_M2 * kap_adj * mat_adj^2]
 
 reg_data[, elas_kap := b_ln_K + 2 * b_ln_K2 * kap_adj +
                       b_ln_L_K * ln_L +
                       b_ln_L_K_M * mat_adj * ln_L +
-                      b_ln_K_M * mat_adj]
+                      b_ln_K_M * mat_adj +
+                      3 * b_ln_K3 * kap_adj^2 +
+                      b_ln_L2_K * ln_L^2 +
+                      2 * b_ln_L_K2 * kap_adj * ln_L +
+                      2 * b_ln_K2_M * kap_adj * mat_adj +
+                      b_ln_K_M2 * mat_adj^2 +
+                      2 * b_ln_L_K2_M * kap_adj * ln_L * mat_adj +
+                      b_ln_L2_K_M * ln_L^2 * mat_adj +
+                      b_ln_L_K_M2 * ln_L * mat_adj^2]
 
 # Markups and demand metric
 reg_data[, share_mat := raw_materials / nq]
