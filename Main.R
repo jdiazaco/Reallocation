@@ -18,7 +18,14 @@ invisible(lapply(packages, library, character.only = TRUE))
 set.seed(123)
 final<-T
 
-main_dir<-"C:/Users/nb/Dropbox/Reallocation - shared folder/Code/IWH_code/3 CASD codes/"
+if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
+  main_dir<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
+}else{
+  main_dir<-"C:/Users/nb/Dropbox/Reallocation - shared folder/Code/IWH_code/3 CASD codes/"
+}
+  
+ 
+
 
 #Bring tools
 tools_dir <- paste0(main_dir, '1 Code/Tools/')

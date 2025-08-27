@@ -1,10 +1,10 @@
-growth_creator<-function(data, normal_cols, n_lag){
+growth_creator<-function(data, normal_cols, n_lag, by_vars=c('firmid','year')){
   setDT(data)
   lag_cols = paste0(normal_cols,'_l')
-  data<-data %>% select(firmid, year, normal_cols)
+  data<-data %>% select(by_vars, normal_cols)
   data_l = data %>% mutate(year = year + n_lag) 
   colnames(data_l)[names(data_l) %in% normal_cols] = lag_cols
-  data = merge(data, data_l,by=c('firmid','year'), all = T) 
+  data = merge(data, data_l,by=by_vars, all = T) 
   
   ## Define 2-year averages,quantiles, growth_rates, shares
   bar_cols = paste0(normal_cols, '_bar')

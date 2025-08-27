@@ -1,7 +1,7 @@
-deflate<-function(data, NACE_var, deflated_vars, base_year){
-  deflators <- fread("C:/Users/Public/1. Microprod/1. Microprod-H2020/NEW_INFRASTRUCTURE/Infra/AuxData/deflators.csv")
+deflate<-function(data, NACE_var, deflated_vars=NULL, base_year){
+  deflators <- fread("Ancillary datasets/deflators.csv")
   deflators <- deflators %>% filter(cc=="FR") %>% select(DEFind, year, pnv)
-  nace_DEFind <- fread("C:/Users/Public/1. Microprod/1. Microprod-H2020/NEW_INFRASTRUCTURE/Infra/MetaData/nace_DEFind.conc", colClasses = c('character'))
+  nace_DEFind <- fread("Ancillary datasets/nace_DEFind.conc", colClasses = c('character'))
   
   deflators <- deflators %>% group_by(DEFind) %>% mutate(pnv_start= pnv/pnv[year==base_year]) # Base year 2009
   

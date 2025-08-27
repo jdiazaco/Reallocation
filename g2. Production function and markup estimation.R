@@ -4,7 +4,7 @@
 # for estimating translog production functions and computing markups.
 
 # Load project configuration
-source("Main.R")
+source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
 
 # -----------------------------------------------------------------------------
 # 1. Load data ---------------------------------------------------------------
@@ -24,39 +24,67 @@ firm_data <- readRDS("sbs_br_combined.RDS")
 firm_data <- firm_data[year > 2009]
 
 product_data <- readRDS("product_data_10_digit_all_prodfra_.RDS")
+deflators <- fread("Ancillary datasets/deflators.csv")
 setDT(product_data)
 setkey(product_data, firmid, prodfra_plus, year)
 
 # -----------------------------------------------------------------------------
 # 2. Construct firm price indices -------------------------------------------
 # -----------------------------------------------------------------------------
-product_data[, price := rev / sold_q]
-product_data[, ln_price := fifelse(price > 0, log(price), NA_real_)]
-product_data[, ln_growth_p := ln_price - shift(ln_price), by = .(firmid, prodfra_plus)]
-product_data[, s_unr := rev / sum(rev, na.rm = TRUE), by = .(firmid, year)]
-product_data[, s_unr_lag := shift(s_unr), by = .(firmid, prodfra_plus)]
-product_data[, s_weight_unr := (s_unr + s_unr_lag) / 2]
-product_data[is.na(s_weight_unr) | is.infinite(s_weight_unr), s_weight_unr := 0]
+# Following the approach in the Stata code, we construct firm-level price indices
+product_data <- product_data[, price := rev / sold_q] %>%
+  .[, ln_price := fifelse(price > 0, log(price), NA_real_)]  %>%
+  .[, ln_growth_p:=ln_price-shift(ln_price), by=.(firmid, prodfra_plus)] %>%
+  .[, s_unr := rev / sum(rev, na.rm = TRUE), by = .(firmid, year)] %>% 
+  .[, s_unr_lag := shift(s_unr), by = .(firmid, prodfra_plus)] %>%
+  .[, s_weight_unr := (s_unr + s_unr_lag) / 2] %>%
+  .[is.na(s_weight_unr) | is.infinite(s_weight_unr), s_weight_unr := 0]
 
+# Compute firm-level price changes
 firm_index <- product_data[!is.na(ln_growth_p), .(
   delta_p_unr = sum(s_weight_unr * ln_growth_p, na.rm = TRUE),
   total_weight = sum(s_unr, na.rm = TRUE),
   valid = sum(s_unr, na.rm = TRUE) >= 0.95
-), by = .(firmid, year)]
-setorder(firm_index, firmid, year)
-firm_index[valid == FALSE, delta_p_unr := 0]
-firm_index[, P_index_ln := cumsum(delta_p_unr), by = firmid]
+), by = .(firmid, year)] %>% 
+  merge(firm_data[, c("firmid", "year","NACE_BR")], 
+        all.x=T, by=c("firmid", "year")) %>%
+  setorder(firmid, year) %>%
+  .[valid == FALSE , delta_p_unr := 0] %>%
+  .[is.infinite(delta_p_unr) | is.na(delta_p_unr) | is.nan(delta_p_unr), delta_p_unr := NA_real_]
+ 
+# Construct industry-year price index to impute missing firm indices
+industry_index <- firm_index[valid==T, .(delta_p_unr_NACE_BR=mean(delta_p_unr, na.rm=T)), by=.(NACE_BR, year)] %>%
+  rbind(data.table(year=2009, delta_p_unr_NACE_BR=100, NACE_BR=unique(.[,NACE_BR])), fill=T) %>%
+  setorder(NACE_BR, year) %>% .[, P_index_ln_NACE_BR := cumsum(delta_p_unr_NACE_BR), by = NACE_BR]
+
+# Merge industry index to firm index
+firm_index <- merge(firm_index, industry_index, by=c("NACE_BR", "year"), all.x = T) 
+
+# Make the complete panel for firm_index
+firm_index <- merge(CJ(firmid = unique(firm_index$firmid), year = 2009:2021), firm_index, by = c("firmid", "year"), all.x = TRUE) %>%
+  # Fill in missing industry codes
+  .[year==2009, delta_p_unr := 0] %>%
+  .[, P_index_ln := cumsum(delta_p_unr), by = firmid] %>%
+# Impute missing firm price indices with averages 
+# (e.g if year 2015 is missing then use the average between year 2014 and 2016 or the closest available year)
+  .[is.na(delta_p_unr), `:=`(delta_p_unr = delta_p_unr_NACE_BR,
+                             impute_flag=1), by = firmid] %>%
+  .[, test_delta_p_unr := (na.locf(delta_p_unr, na.rm = FALSE)+na.locf(delta_p_unr, na.rm = FALSE, fromLast=T))/2, by = firmid] %>%
+  .[year==2009, test_delta_p_unr := 100] %>%
+  .[, P_index_ln := cumsum(test_delta_p_unr), by = firmid]
+  
 firm_price_index <- firm_index[, .(firmid, year, pf = P_index_ln)]
 
 # -----------------------------------------------------------------------------
 # 3. Prepare production variables -------------------------------------------
+# -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
 df <- merge(firm_data, firm_price_index, by = c("firmid", "year"), all.x = TRUE)
 setDT(df)
 df <- df[order(firmid, year)]
 
 # Log variables and cost shares
-small <- 1e-6
+small <- 0
 
 df[, `:=`(
   ln_Y = log(nq + small),
@@ -75,7 +103,20 @@ df[, `:=`(
   ln_L_K = ln_L * ln_K,
   ln_L_M = ln_L * ln_M,
   ln_K_M = ln_K * ln_M,
-  ln_L_K_M = ln_L * ln_K * ln_M
+  ln_L_K_M = ln_L * ln_K * ln_M,
+  # Cubic and mixed third-order terms
+  ln_L3 = ln_L^3,
+  ln_K3 = ln_K^3,
+  ln_M3 = ln_M^3,
+  ln_L_K2 = ln_L * ln_K^2,
+  ln_L_M2 = ln_L * ln_M^2,
+  ln_K_M2 = ln_K * ln_M^2,
+  ln_L2_K = ln_L^2 * ln_K,
+  ln_L2_M = ln_L^2 * ln_M,
+  ln_K2_M = ln_K^2 * ln_M
+  # ln_L2_K_M = ln_L^2 * ln_K * ln_M,
+  # ln_L_K2_M = ln_L * ln_K^2 * ln_M,
+  # ln_L_K_M2 = ln_L * ln_K * ln_M^2
 )]
 
 # Price interaction terms
@@ -89,17 +130,37 @@ df[, `:=`(
   priceLM  = pf * ln_L * ln_M,
   priceLK  = pf * ln_L * ln_K,
   priceMK  = pf * ln_M * ln_K,
-  priceLMK = pf * ln_L * ln_M * ln_K
+  priceLMK = pf * ln_L * ln_M * ln_K,
+  priceL3  = pf * ln_L3,
+  priceK3  = pf * ln_K3,
+  priceM3  = pf * ln_M3,
+  priceLK2 = pf * ln_L_K2,
+  priceLM2 = pf * ln_L_M2,
+  priceKM2 = pf * ln_K_M2,
+  priceL2K = pf * ln_L2_K,
+  priceL2M = pf * ln_L2_M,
+  priceK2M = pf * ln_K2_M
+  # priceL2KM = pf * ln_L2_K_M,
+  # priceLK2M = pf * ln_L_K2_M,
+  # priceLKM2 = pf * ln_L_K_M2
 )]
 
 # Lagged instruments
-lag_vars <- c("ln_L", "ln_L2", "ln_K", "ln_K2", "ln_L_K",
-              "ln_M", "ln_M2", "ln_K_M", "ln_L_M", "ln_L_K_M",
+lag_vars <- c("ln_L", "ln_L2", "ln_L3", "ln_K", "ln_K2", "ln_K3",
+              "ln_L_K", "ln_L_K2", "ln_L2_K",
+              "ln_M", "ln_M2", "ln_M3", "ln_K_M", "ln_L_M", "ln_K_M2",
+              "ln_L2_M", "ln_L_M2", "ln_K2_M", #, "ln_L2_K_M", "ln_L_K2_M",
+              #"ln_L_K_M2",
               "pf", "Rshare",
               "priceL", "priceK", "priceM",
               "priceL2", "priceK2", "priceM2",
-              "priceLM", "priceLK", "priceMK", "priceLMK")
+              "priceL3", "priceK3", "priceM3",
+              "priceLM", "priceLK", "priceMK", "priceLMK",
+              "priceLK2", "priceLM2", "priceKM2",
+              "priceL2K", "priceL2M", "priceK2M")
+              # "priceL2KM", "priceLK2M", "priceLKM2")
 for (v in lag_vars) {
+  print(v)
   df[, paste0("l_", v) := shift(get(v)), by = firmid]
 }
 
@@ -109,23 +170,29 @@ for (v in lag_vars) {
 # The specification mirrors the Stata implementation using a translog
 # production function with materials treated as an endogenous input.
 
-iv_formula <- ln_Y ~ ln_L + ln_L2 + ln_K + ln_K2 + ln_L_K +
-  ln_M + ln_M2 + ln_K_M + ln_L_M + ln_L_K_M +
+iv_formula <- ln_Y ~ ln_L + ln_L2 + ln_L3 + ln_K + ln_K2 + ln_K3 + ln_L_K +
+  ln_L_K2 + ln_L2_K +
+  ln_M + ln_M2 + ln_M3 + ln_K_M + ln_L_M + ln_K_M2 + ln_L2_M + ln_L_M2 + ln_K2_M +
+  ln_L_K_M + 
   pf + Rshare +
   priceL + priceK + priceM +
   priceL2 + priceK2 + priceM2 +
-  priceLM + priceLK + priceMK + priceLMK | 
-  l_ln_M + l_ln_M2 + l_ln_K + l_ln_L +
+  priceL3 + priceK3 + priceM3 +
+  priceLM + priceLK + priceMK + priceLMK +
+  priceLK2 + priceLM2 + priceKM2 + priceL2K + priceL2M + priceK2M |
+  l_ln_M + l_ln_M2 + l_ln_M3 + l_ln_K + l_ln_L +
   l_pf + l_Rshare +
   l_priceL + l_priceK + l_priceM +
   l_priceL2 + l_priceK2 + l_priceM2 +
-  l_priceLM + l_priceLK + l_priceMK + l_priceLMK
+  l_priceL3 + l_priceK3 + l_priceM3 +
+  l_priceLM + l_priceLK + l_priceMK + l_priceLMK +
+  l_priceLK2 + l_priceLM2 + l_priceKM2 + l_priceL2K + l_priceL2M + l_priceK2M 
 
 iv_vars <- all.vars(iv_formula)
 reg_data <- df[complete.cases(df[, ..iv_vars])]
 
 # Include industry and year fixed effects using factor variables
-reg_data[, `:=`(industry = factor(nace_2d), year_fe = factor(year))]
+reg_data[, `:=`(industry = factor(NACE_BR), year_fe = factor(year))]
 
 pf_model <- ivreg(update(iv_formula, . ~ . + industry + year_fe), data = reg_data)
 
@@ -136,18 +203,27 @@ coefs <- coef(pf_model)
 
 # Price correction term
 reg_data[, w_con := 
-  coefs["pf"]       * pf       +
-  coefs["Rshare"]   * Rshare   +
-  coefs["priceL"]   * priceL   +
-  coefs["priceM"]   * priceM   +
-  coefs["priceK"]   * priceK   +
-  coefs["priceL2"]  * priceL2  +
-  coefs["priceM2"]  * priceM2  +
-  coefs["priceK2"]  * priceK2  +
-  coefs["priceLM"]  * priceLM  +
-  coefs["priceLK"]  * priceLK  +
-  coefs["priceMK"]  * priceMK  +
-  coefs["priceLMK"] * priceLMK ]
+           coefs["pf"]       * pf       +
+           coefs["Rshare"]   * Rshare   +
+           coefs["priceL"]   * priceL   +
+           coefs["priceM"]   * priceM   +
+           coefs["priceK"]   * priceK   +
+           coefs["priceL2"]  * priceL2  +
+           coefs["priceM2"]  * priceM2  +
+           coefs["priceK2"]  * priceK2  +
+           coefs["priceLM"]  * priceLM  +
+           coefs["priceLK"]  * priceLK  +
+           coefs["priceMK"]  * priceMK  +
+           coefs["priceLMK"] * priceLMK +
+           coefs["priceL3"]   * priceL3   +
+           coefs["priceM3"]   * priceM3   +
+           coefs["priceK3"]   * priceK3   +
+           coefs["priceLK2"]  * priceLK2  +
+           coefs["priceLM2"]  * priceLM2  +
+           coefs["priceKM2"]  * priceKM2  +
+           coefs["priceL2K"]  * priceL2K  +
+           coefs["priceL2M"]  * priceL2M  +
+           coefs["priceK2M"]  * priceK2M  ]
 
 # Adjust inputs by the price component
 reg_data[, mat_adj := ln_M - w_con]
@@ -157,30 +233,66 @@ reg_data[, kap_adj := ln_K - w_con]
 b <- coefs
 b_ln_L        <- b["ln_L"]
 b_ln_L2       <- b["ln_L2"]
+b_ln_L3       <- b["ln_L3"]
 b_ln_K        <- b["ln_K"]
 b_ln_K2       <- b["ln_K2"]
+b_ln_K3       <- b["ln_K3"]
 b_ln_L_K      <- b["ln_L_K"]
+b_ln_L_K2     <- b["ln_L_K2"]
+b_ln_L2_K     <- b["ln_L2_K"]
 b_ln_M        <- b["ln_M"]
 b_ln_M2       <- b["ln_M2"]
+b_ln_M3       <- b["ln_M3"]
 b_ln_K_M      <- b["ln_K_M"]
+b_ln_K_M2     <- b["ln_K_M2"]
+b_ln_L2_M     <- b["ln_L2_M"]
+b_ln_L_M2     <- b["ln_L_M2"]
+b_ln_K2_M     <- b["ln_K2_M"]
 b_ln_L_M      <- b["ln_L_M"]
 b_ln_L_K_M    <- b["ln_L_K_M"]
+b_ln_L2_K_M   <- b["ln_L2_K_M"]
+b_ln_L_K2_M   <- b["ln_L_K2_M"]
+b_ln_L_K_M2   <- b["ln_L_K_M2"]
 
 # Output elasticities following the Stata formulas
 reg_data[, elas_mat := b_ln_M + 2 * b_ln_M2 * mat_adj +
-                      b_ln_K_M * kap_adj +
-                      b_ln_L_M * ln_L +
-                      b_ln_L_K_M * ln_L * kap_adj]
+           b_ln_K_M * kap_adj +
+           b_ln_L_M * ln_L +
+           b_ln_L_K_M * ln_L * kap_adj +
+           3 * b_ln_M3 * mat_adj^2 +
+           b_ln_L2_M * ln_L^2 +
+           b_ln_K2_M * kap_adj^2 +
+           2 * b_ln_L_M2 * mat_adj * ln_L +
+           2 * b_ln_K_M2 * mat_adj * kap_adj +
+           b_ln_L2_K_M * ln_L^2 * kap_adj +
+           b_ln_L_K2_M * ln_L * kap_adj^2 +
+           2 * b_ln_L_K_M2 * ln_L * kap_adj * mat_adj]
 
 reg_data[, elas_lab := b_ln_L + 2 * b_ln_L2 * ln_L +
-                      b_ln_L_K * kap_adj +
-                      b_ln_L_K_M * mat_adj * kap_adj +
-                      b_ln_L_M * mat_adj]
+           b_ln_L_K * kap_adj +
+           b_ln_L_K_M * mat_adj * kap_adj +
+           b_ln_L_M * mat_adj +
+           3 * b_ln_L3 * ln_L^2 +
+           2 * b_ln_L2_K * ln_L * kap_adj +
+           2 * b_ln_L2_M * ln_L * mat_adj +
+           b_ln_L_K2 * kap_adj^2 +
+           b_ln_L_M2 * mat_adj^2 +
+           2 * b_ln_L2_K_M * ln_L * kap_adj * mat_adj +
+           b_ln_L_K2_M * kap_adj^2 * mat_adj +
+           b_ln_L_K_M2 * kap_adj * mat_adj^2]
 
 reg_data[, elas_kap := b_ln_K + 2 * b_ln_K2 * kap_adj +
-                      b_ln_L_K * ln_L +
-                      b_ln_L_K_M * mat_adj * ln_L +
-                      b_ln_K_M * mat_adj]
+           b_ln_L_K * ln_L +
+           b_ln_L_K_M * mat_adj * ln_L +
+           b_ln_K_M * mat_adj +
+           3 * b_ln_K3 * kap_adj^2 +
+           b_ln_L2_K * ln_L^2 +
+           2 * b_ln_L_K2 * kap_adj * ln_L +
+           2 * b_ln_K2_M * kap_adj * mat_adj +
+           b_ln_K_M2 * mat_adj^2 +
+           2 * b_ln_L_K2_M * kap_adj * ln_L * mat_adj +
+           b_ln_L2_K_M * ln_L^2 * mat_adj +
+           b_ln_L_K_M2 * ln_L * mat_adj^2]
 
 # Markups and demand metric
 reg_data[, share_mat := raw_materials / nq]
