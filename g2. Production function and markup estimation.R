@@ -24,6 +24,7 @@ firm_data <- readRDS("sbs_br_combined.RDS")
 firm_data <- firm_data[year > 2009]
 
 product_data <- readRDS("product_data_10_digit_all_prodfra_.RDS")
+product_summary <- readRDS("product_firm_data_pre_high_growth.RDS")
 deflators <- fread("Ancillary datasets/deflators.csv")
 setDT(product_data)
 setkey(product_data, firmid, prodfra_plus, year)
@@ -51,7 +52,7 @@ firm_index <- product_data[!is.na(ln_growth_p), .(
   setorder(firmid, year) %>%
   .[valid == FALSE , delta_p_unr := 0] %>%
   .[is.infinite(delta_p_unr) | is.na(delta_p_unr) | is.nan(delta_p_unr), delta_p_unr := NA_real_]
- 
+
 # Construct industry-year price index to impute missing firm indices
 industry_index <- firm_index[valid==T, .(delta_p_unr_NACE_BR=mean(delta_p_unr, na.rm=T)), by=.(NACE_BR, year)] %>%
   rbind(data.table(year=2009, delta_p_unr_NACE_BR=100, NACE_BR=unique(.[,NACE_BR])), fill=T) %>%
@@ -65,21 +66,47 @@ firm_index <- merge(CJ(firmid = unique(firm_index$firmid), year = 2009:2021), fi
   # Fill in missing industry codes
   .[year==2009, delta_p_unr := 0] %>%
   .[, P_index_ln := cumsum(delta_p_unr), by = firmid] %>%
-# Impute missing firm price indices with averages 
-# (e.g if year 2015 is missing then use the average between year 2014 and 2016 or the closest available year)
+  # Impute missing firm price indices with averages 
+  # (e.g if year 2015 is missing then use the average between year 2014 and 2016 or the closest available year)
   .[is.na(delta_p_unr), `:=`(delta_p_unr = delta_p_unr_NACE_BR,
                              impute_flag=1), by = firmid] %>%
   .[, test_delta_p_unr := (na.locf(delta_p_unr, na.rm = FALSE)+na.locf(delta_p_unr, na.rm = FALSE, fromLast=T))/2, by = firmid] %>%
   .[year==2009, test_delta_p_unr := 100] %>%
   .[, P_index_ln := cumsum(test_delta_p_unr), by = firmid]
-  
+
 firm_price_index <- firm_index[, .(firmid, year, pf = P_index_ln)]
 
 # -----------------------------------------------------------------------------
-# 3. Prepare production variables -------------------------------------------
+# 3. Construct market share variables -------------------------------------------
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
-df <- merge(firm_data, firm_price_index, by = c("firmid", "year"), all.x = TRUE)
+
+
+# 1. product-level market sales
+product_data[, market_sales := sum(rev, na.rm = TRUE),
+             by = .(prodfra_plus, year)]
+
+# 2. firm’s product market share
+product_data[, ms_firmproduct := rev / market_sales]
+
+# 3. firm total revenue for weights
+product_data[, firmsales := sum(rev, na.rm = TRUE), by = .(firmid, year)]
+
+# 4. firm-level market share
+firm_ms <- product_data[
+  , .(Firm_ms = sum(ms_firmproduct * rev / firmsales, na.rm = TRUE)),
+  by = .(firmid, year)
+]
+firm_ms[, Firm_ms := 100 * Firm_ms]          
+firm_ms[, Rshare := log(Firm_ms)]            
+
+# -----------------------------------------------------------------------------
+# 4. Prepare production variables -------------------------------------------
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+df <- merge(product_summary, firm_price_index, by = c("firmid", "year"), all.x = TRUE) %>%
+  merge(firm_ms, by = c("firmid", "year"), all.x = TRUE)
+
 setDT(df)
 df <- df[order(firmid, year)]
 
@@ -91,9 +118,13 @@ df[, `:=`(
   ln_K = log(capital + small),
   ln_L = log(empl + small),
   ln_M = log(raw_materials + small),
-  wage_nominal = labor_cost / empl,
-  Rshare = log(raw_materials / nq + small)
-)]
+  ln_wage = log(labor_cost / empl)
+  # Rshare = log(raw_materials / nq + small)
+)] %>%
+  .[, pf:=log(pf) - ln_wage]
+
+# Lagged materials (to be used as proxy for unobserved productivity)
+df[, ln_P:= shift(ln_M), by = firmid] 
 
 # Higher order and interaction terms
 df[, `:=`(
@@ -118,6 +149,20 @@ df[, `:=`(
   # ln_L_K2_M = ln_L * ln_K^2 * ln_M,
   # ln_L_K_M2 = ln_L * ln_K * ln_M^2
 )]
+
+df[, `:=`(
+  ln_P2 = ln_P^2,
+  ln_L_P = ln_L * ln_P,
+  ln_K_P = ln_K * ln_P,
+  ln_L_K_P = ln_L * ln_K * ln_P,
+  ln_P3 = ln_P^3,
+  ln_L_K2 = ln_L * ln_K^2,
+  ln_L_P2 = ln_L * ln_P^2,
+  ln_K_P2 = ln_K * ln_P^2,
+  ln_L2_P = ln_L^2 * ln_P,
+  ln_K2_P = ln_K^2 * ln_P
+)]
+
 
 # Price interaction terms
 df[, `:=`(
@@ -146,11 +191,11 @@ df[, `:=`(
 )]
 
 # Lagged instruments
-lag_vars <- c("ln_L", "ln_L2", "ln_L3", "ln_K", "ln_K2", "ln_K3",
-              "ln_L_K", "ln_L_K2", "ln_L2_K",
-              "ln_M", "ln_M2", "ln_M3", "ln_K_M", "ln_L_M", "ln_K_M2",
-              "ln_L2_M", "ln_L_M2", "ln_K2_M", #, "ln_L2_K_M", "ln_L_K2_M",
-              #"ln_L_K_M2",
+lag_vars <- c("ln_L", "ln_L2", "ln_L3", "ln_K", "ln_K2", "ln_K3", "ln_L_K", "ln_L_K2", "ln_L2_K",
+              "ln_P", "ln_P2","ln_L_P","ln_K_P","ln_L_K_P","ln_P3", "ln_L_K2",
+              "ln_L_P2","ln_K_P2", "ln_L2_P", "ln_K2_P","ln_M", "ln_M2", "ln_M3", "ln_K_M", "ln_L_M", "ln_K_M2",
+              "ln_L2_M", "ln_L_M2", "ln_K2_M", "ln_L_K_M",
+              "log_n_products", "ln_wage",
               "pf", "Rshare",
               "priceL", "priceK", "priceM",
               "priceL2", "priceK2", "priceM2",
@@ -158,7 +203,7 @@ lag_vars <- c("ln_L", "ln_L2", "ln_L3", "ln_K", "ln_K2", "ln_K3",
               "priceLM", "priceLK", "priceMK", "priceLMK",
               "priceLK2", "priceLM2", "priceKM2",
               "priceL2K", "priceL2M", "priceK2M")
-              # "priceL2KM", "priceLK2M", "priceLKM2")
+
 for (v in lag_vars) {
   print(v)
   df[, paste0("l_", v) := shift(get(v)), by = firmid]
@@ -170,139 +215,105 @@ for (v in lag_vars) {
 # The specification mirrors the Stata implementation using a translog
 # production function with materials treated as an endogenous input.
 
-iv_formula <- ln_Y ~ ln_L + ln_L2 + ln_L3 + ln_K + ln_K2 + ln_K3 + ln_L_K +
-  ln_L_K2 + ln_L2_K +
-  ln_M + ln_M2 + ln_M3 + ln_K_M + ln_L_M + ln_K_M2 + ln_L2_M + ln_L_M2 + ln_K2_M +
-  ln_L_K_M + 
-  pf + Rshare +
-  priceL + priceK + priceM +
-  priceL2 + priceK2 + priceM2 +
-  priceL3 + priceK3 + priceM3 +
-  priceLM + priceLK + priceMK + priceLMK +
-  priceLK2 + priceLM2 + priceKM2 + priceL2K + priceL2M + priceK2M |
-  l_ln_M + l_ln_M2 + l_ln_M3 + l_ln_K + l_ln_L +
-  l_pf + l_Rshare +
-  l_priceL + l_priceK + l_priceM +
-  l_priceL2 + l_priceK2 + l_priceM2 +
-  l_priceL3 + l_priceK3 + l_priceM3 +
-  l_priceLM + l_priceLK + l_priceMK + l_priceLMK +
-  l_priceLK2 + l_priceLM2 + l_priceKM2 + l_priceL2K + l_priceL2M + l_priceK2M 
+iv_formula <- as.formula(ln_Y ~ ln_L + ln_K + ln_L2 + ln_K2 + ln_L_K +
+                           l_log_n_products + l_ln_wage +
+                           l_ln_L + l_ln_L2 + l_ln_L3 + 
+                           l_ln_L_K2 + l_ln_L_P2 + l_ln_L_K + l_ln_L_P +
+                           l_ln_L2_K + l_ln_L2_P + 
+                           l_ln_K + l_ln_K2 + l_ln_K3 + 
+                           l_ln_K_P2 + l_ln_K_P + l_ln_K2_M + 
+                           l_ln_P + l_ln_P2 + l_ln_P3 +
+                           l_ln_L_K_P + 
+                           ln_M + ln_M2 + ln_K_M + ln_L_M + ln_L_K_M + 
+                           pf + Rshare +
+                           priceL + priceK + priceM +
+                           priceL2 + priceK2 + priceM2 +
+                           priceLM + priceLK + priceMK + priceLMK |
+                           ln_L + ln_K + ln_L2 + ln_K2 + ln_L_K +
+                           l_log_n_products + l_ln_wage +
+                           l_ln_L + l_ln_L2 + l_ln_L3 + 
+                           l_ln_L_K2 + l_ln_L_P2 + l_ln_L_K + l_ln_L_P +
+                           l_ln_L2_K + l_ln_L2_P + 
+                           l_ln_K + l_ln_K2 + l_ln_K3 + 
+                           l_ln_K_P2 + l_ln_K_P + l_ln_K2_M + 
+                           l_ln_P + l_ln_P2 + l_ln_P3 +
+                           l_ln_L_K_P +
+                           l_ln_M + l_ln_M2 + l_ln_K_M + l_ln_L_M + l_ln_L_K_M +
+                           l_pf + l_Rshare +
+                           l_priceL + l_priceK + l_priceM +
+                           l_priceL2 + l_priceK2 + l_priceM2 +
+                           l_priceLM + l_priceLK + l_priceMK + l_priceLMK)
 
 iv_vars <- all.vars(iv_formula)
 reg_data <- df[complete.cases(df[, ..iv_vars])]
 
 # Include industry and year fixed effects using factor variables
 reg_data[, `:=`(industry = factor(NACE_BR), year_fe = factor(year))]
+reg_data<-reg_data[, .SD, .SDcols = c("firmid", "industry", "year_fe", "number_of_products", iv_vars)]
 
-pf_model <- ivreg(update(iv_formula, . ~ . + industry + year_fe), data = reg_data)
-
-# -----------------------------------------------------------------------------
-# 5. Compute output elasticities and markups --------------------------------
-# -----------------------------------------------------------------------------
-coefs <- coef(pf_model)
-
-# Price correction term
-reg_data[, w_con := 
-           coefs["pf"]       * pf       +
-           coefs["Rshare"]   * Rshare   +
-           coefs["priceL"]   * priceL   +
-           coefs["priceM"]   * priceM   +
-           coefs["priceK"]   * priceK   +
-           coefs["priceL2"]  * priceL2  +
-           coefs["priceM2"]  * priceM2  +
-           coefs["priceK2"]  * priceK2  +
-           coefs["priceLM"]  * priceLM  +
-           coefs["priceLK"]  * priceLK  +
-           coefs["priceMK"]  * priceMK  +
-           coefs["priceLMK"] * priceLMK +
-           coefs["priceL3"]   * priceL3   +
-           coefs["priceM3"]   * priceM3   +
-           coefs["priceK3"]   * priceK3   +
-           coefs["priceLK2"]  * priceLK2  +
-           coefs["priceLM2"]  * priceLM2  +
-           coefs["priceKM2"]  * priceKM2  +
-           coefs["priceL2K"]  * priceL2K  +
-           coefs["priceL2M"]  * priceL2M  +
-           coefs["priceK2M"]  * priceK2M  ]
-
-# Adjust inputs by the price component
-reg_data[, mat_adj := ln_M - w_con]
-reg_data[, kap_adj := ln_K - w_con]
-
-# Retrieve production-function coefficients
-b <- coefs
-b_ln_L        <- b["ln_L"]
-b_ln_L2       <- b["ln_L2"]
-b_ln_L3       <- b["ln_L3"]
-b_ln_K        <- b["ln_K"]
-b_ln_K2       <- b["ln_K2"]
-b_ln_K3       <- b["ln_K3"]
-b_ln_L_K      <- b["ln_L_K"]
-b_ln_L_K2     <- b["ln_L_K2"]
-b_ln_L2_K     <- b["ln_L2_K"]
-b_ln_M        <- b["ln_M"]
-b_ln_M2       <- b["ln_M2"]
-b_ln_M3       <- b["ln_M3"]
-b_ln_K_M      <- b["ln_K_M"]
-b_ln_K_M2     <- b["ln_K_M2"]
-b_ln_L2_M     <- b["ln_L2_M"]
-b_ln_L_M2     <- b["ln_L_M2"]
-b_ln_K2_M     <- b["ln_K2_M"]
-b_ln_L_M      <- b["ln_L_M"]
-b_ln_L_K_M    <- b["ln_L_K_M"]
-b_ln_L2_K_M   <- b["ln_L2_K_M"]
-b_ln_L_K2_M   <- b["ln_L_K2_M"]
-b_ln_L_K_M2   <- b["ln_L_K_M2"]
-
-# Output elasticities following the Stata formulas
-reg_data[, elas_mat := b_ln_M + 2 * b_ln_M2 * mat_adj +
-           b_ln_K_M * kap_adj +
-           b_ln_L_M * ln_L +
-           b_ln_L_K_M * ln_L * kap_adj +
-           3 * b_ln_M3 * mat_adj^2 +
-           b_ln_L2_M * ln_L^2 +
-           b_ln_K2_M * kap_adj^2 +
-           2 * b_ln_L_M2 * mat_adj * ln_L +
-           2 * b_ln_K_M2 * mat_adj * kap_adj +
-           b_ln_L2_K_M * ln_L^2 * kap_adj +
-           b_ln_L_K2_M * ln_L * kap_adj^2 +
-           2 * b_ln_L_K_M2 * ln_L * kap_adj * mat_adj]
-
-reg_data[, elas_lab := b_ln_L + 2 * b_ln_L2 * ln_L +
-           b_ln_L_K * kap_adj +
-           b_ln_L_K_M * mat_adj * kap_adj +
-           b_ln_L_M * mat_adj +
-           3 * b_ln_L3 * ln_L^2 +
-           2 * b_ln_L2_K * ln_L * kap_adj +
-           2 * b_ln_L2_M * ln_L * mat_adj +
-           b_ln_L_K2 * kap_adj^2 +
-           b_ln_L_M2 * mat_adj^2 +
-           2 * b_ln_L2_K_M * ln_L * kap_adj * mat_adj +
-           b_ln_L_K2_M * kap_adj^2 * mat_adj +
-           b_ln_L_K_M2 * kap_adj * mat_adj^2]
-
-reg_data[, elas_kap := b_ln_K + 2 * b_ln_K2 * kap_adj +
-           b_ln_L_K * ln_L +
-           b_ln_L_K_M * mat_adj * ln_L +
-           b_ln_K_M * mat_adj +
-           3 * b_ln_K3 * kap_adj^2 +
-           b_ln_L2_K * ln_L^2 +
-           2 * b_ln_L_K2 * kap_adj * ln_L +
-           2 * b_ln_K2_M * kap_adj * mat_adj +
-           b_ln_K_M2 * mat_adj^2 +
-           2 * b_ln_L_K2_M * kap_adj * ln_L * mat_adj +
-           b_ln_L2_K_M * ln_L^2 * mat_adj +
-           b_ln_L_K_M2 * ln_L * mat_adj^2]
-
-# Markups and demand metric
-reg_data[, share_mat := raw_materials / nq]
-reg_data[, share_lab := labor_cost / nq]
-
-reg_data[, MU_mat := elas_mat / share_mat]
-reg_data[, MU_lab := elas_lab / share_lab]
-reg_data[, DM := (elas_lab / elas_mat) * (raw_materials / labor_cost)]
-
-# Store results
-saveRDS(reg_data[, .(firmid, year, MU_mat, MU_lab, DM,
-                     elas_mat, elas_lab, elas_kap)],
-        file = "production_function_markups.RDS")
+for(industry_temp in unique(reg_data$industry)){
+  industry_temp="2830"
+  pf_model <- ivreg(ln_Y ~ ln_L + ln_K + ln_L2 + ln_K2 + ln_L_K +
+                      l_log_n_products + l_ln_wage +
+                      l_ln_L + l_ln_L2 + l_ln_L3 + 
+                      l_ln_L_K2 + l_ln_L_P2 + l_ln_L_K + l_ln_L_P +
+                      l_ln_L2_K + l_ln_L2_P + 
+                      l_ln_K + l_ln_K2 + l_ln_K3 + 
+                      l_ln_K_P2 + l_ln_K_P + l_ln_K2_M + 
+                      l_ln_P + l_ln_P2 + l_ln_P3 +
+                      l_ln_L_K_P + 
+                      ln_M + ln_M2 + ln_K_M + ln_L_M + ln_L_K_M + 
+                      pf + Rshare +
+                      priceL + priceK + priceM +
+                      priceL2 + priceK2 + priceM2 +
+                      priceLM + priceLK + priceMK + priceLMK |
+                      ln_L + ln_K + ln_L2 + ln_K2 + ln_L_K +
+                      l_log_n_products + l_ln_wage +
+                      l_ln_L + l_ln_L2 + l_ln_L3 + 
+                      l_ln_L_K2 + l_ln_L_P2 + l_ln_L_K + l_ln_L_P +
+                      l_ln_L2_K + l_ln_L2_P + 
+                      l_ln_K + l_ln_K2 + l_ln_K3 + 
+                      l_ln_K_P2 + l_ln_K_P + l_ln_K2_M + 
+                      l_ln_P + l_ln_P2 + l_ln_P3 +
+                      l_ln_L_K_P +
+                      l_ln_M + l_ln_M2 + l_ln_K_M + l_ln_L_M + l_ln_L_K_M +
+                      l_pf + l_Rshare +
+                      l_priceL + l_priceK + l_priceM +
+                      l_priceL2 + l_priceK2 + l_priceM2 +
+                      l_priceLM + l_priceLK + l_priceMK + l_priceLMK, data = reg_data[industry == industry_temp])
+  pf_model_alt <- feols(ln_Y ~ ln_L + ln_K + ln_L2 + ln_K2 + ln_L_K +
+                          l_log_n_products + l_ln_wage +
+                          l_ln_L + l_ln_L2 + l_ln_L3 + 
+                          l_ln_L_K2 + l_ln_L_P2 + l_ln_L_K + l_ln_L_P +
+                          l_ln_L2_K + l_ln_L2_P + 
+                          l_ln_K + l_ln_K2 + l_ln_K3 + 
+                          l_ln_K_P2 + l_ln_K_P + l_ln_K2_M + 
+                          l_ln_P + l_ln_P2 + l_ln_P3 +
+                          l_ln_L_K_P + 
+                          ln_M + ln_M2 + ln_K_M + ln_L_M + ln_L_K_M + 
+                          pf + Rshare +
+                          priceL + priceK + priceM +
+                          priceL2 + priceK2 + priceM2 +
+                          priceLM + priceLK + priceMK + priceLMK , 
+                        iv = ~ ln_M + ln_M2 + ln_K_M + ln_L_M + ln_L_K_M + 
+                          pf + Rshare +
+                          priceL + priceK + priceM +
+                          priceL2 + priceK2 + priceM2 +
+                          priceLM + priceLK + priceMK + priceLMK ~  
+                          l_ln_M + l_ln_M2 + l_ln_K_M + l_ln_L_M + l_ln_L_K_M +
+                          l_pf + l_Rshare +
+                          l_priceL + l_priceK + l_priceM +
+                          l_priceL2 + l_priceK2 + l_priceM2 +
+                          l_priceLM + l_priceLK + l_priceMK + l_priceLMK,
+                        data=reg_data[industry == industry_temp])
+  
+  ci <- coef(pf_model)
+  cf <- coef(pf_model_alt)
+  all.equal(cf[names(ci)], ci[names(cf)], tolerance = 1e-8)
+  
+  # Compare fitted values on the common estimation sample
+  s <- rownames(model.frame(pf_model))
+  all.equal(predict(pf_model)[s], predict(pf_model_alt)[s], tolerance = 1e-8)
+  
+  
+}
