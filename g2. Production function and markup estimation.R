@@ -387,13 +387,61 @@ for(industry_temp in unique(reg_data$industry)){
      , MU_lab := elas_lab / share_lab]
   df[NACE_BR==industry_temp,
      , DM := (elas_lab / elas_mat) * (raw_materials / labor_cost)]
-  
+
 
 }
 
 
 
+# -----------------------------------------------------------------------------
+# 5. Cost share approach ------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Following the Stata routine, compute output elasticities using median input
+# cost shares within industry-year cells.  We construct the cost of capital as
+# eight percent of the capital stock and obtain factor elasticities from median
+# expenditure shares.  Markups and the demand metric based on these elasticities
+# are computed for both 4-digit and 2-digit NACE industry definitions so that
+# they can be compared to the price-control-function estimates above.
+
+# Total cost of inputs
+df[, cap_cost := 0.08 * capital]
+df[, total_cost := labor_cost + raw_materials + cap_cost]
+
+# 2-digit industry code
+df[, NACE2 := substr(as.character(NACE_BR), 1, 2)]
+
+# 4-digit industry-year median cost shares
+df[, `:=`(
+  elas_lab_cs = median(labor_cost / total_cost, na.rm = TRUE),
+  elas_mat_cs = median(raw_materials / total_cost, na.rm = TRUE),
+  elas_kap_cs = median(cap_cost / total_cost, na.rm = TRUE)
+), by = .(NACE_BR, year)]
+
+# 2-digit industry-year median cost shares
+df[, `:=`(
+  elas_lab_cs2 = median(labor_cost / total_cost, na.rm = TRUE),
+  elas_mat_cs2 = median(raw_materials / total_cost, na.rm = TRUE),
+  elas_kap_cs2 = median(cap_cost / total_cost, na.rm = TRUE)
+), by = .(NACE2, year)]
+
+# Cost-share-based markups and demand metric
+df[, `:=`(
+  MU_mat_cs  = elas_mat_cs / share_mat,
+  MU_lab_cs  = elas_lab_cs / share_lab,
+  DM_cs      = (elas_lab_cs / elas_mat_cs) * (raw_materials / labor_cost),
+  MU_mat_cs2 = elas_mat_cs2 / share_mat,
+  MU_lab_cs2 = elas_lab_cs2 / share_lab,
+  DM_cs2     = (elas_lab_cs2 / elas_mat_cs2) * (raw_materials / labor_cost)
+)]
+
+
+# -----------------------------------------------------------------------------
 # Store results
-saveRDS(df[, .(firmid, year, MU_mat, MU_lab, DM,
-                     elas_mat, elas_lab, elas_kap)],
+saveRDS(df[, .(firmid, year,
+               MU_mat, MU_lab, DM,
+               elas_mat, elas_lab, elas_kap,
+               MU_mat_cs, MU_lab_cs, DM_cs,
+               elas_mat_cs, elas_lab_cs, elas_kap_cs,
+               MU_mat_cs2, MU_lab_cs2, DM_cs2,
+               elas_mat_cs2, elas_lab_cs2, elas_kap_cs2)],
         file = "production_function_markups.RDS")
