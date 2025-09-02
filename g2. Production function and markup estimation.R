@@ -250,7 +250,8 @@ reg_data <- df[complete.cases(df[, ..iv_vars])]
 # Include industry and year fixed effects using factor variables
 reg_data[, `:=`(industry = factor(NACE_BR), year_fe = factor(year))]
 reg_data<-reg_data[, .SD, .SDcols = c("firmid", "industry", "year_fe", "number_of_products", iv_vars)]
-df<-df[, .SD, .SDcols = c("firmid", "NACE_BR", "year", "number_of_products", iv_vars)]
+df<-df[, .SD, .SDcols = c("firmid", "NACE_BR", "year", "number_of_products", 
+                          "capital", "empl", "labor_cost", "raw_materials", "nq", iv_vars)]
 
 
 X_exog <- c("ln_L","ln_K","ln_L2","ln_K2","ln_L_K",
@@ -286,32 +287,38 @@ for(industry_temp in unique(reg_data$industry)){
   keep <- complete.cases(d[, all_vars, with = FALSE])
   d <- d[keep]
   
+  if(nrow(d)<15){
+    next
+  }
+  
   if(iv_command=="ivreg"){
     pf_model <- ivreg(
-    as.formula(paste(
-      "ln_Y ~", paste(X_exog, collapse="+"), "|",
-      paste(c(setdiff(X_exog, ENDOG), IVs), collapse="+")  # exog (excluding endog) + IVs
-    )),
-    data = d
-  )
+      as.formula(paste(
+        "ln_Y ~", paste(X_exog, collapse="+"), "|",
+        paste(c(setdiff(X_exog, ENDOG), IVs), collapse="+")  # exog (excluding endog) + IVs
+      )),
+      data = d
+    )
   }
-
+  
   if(iv_command=="feols"){
     pf_model <- feols(
-    as.formula(paste("ln_Y ~", paste(X_exog, collapse="+"), "| ", paste(fixed_effects, collapse="+"))),
-    iv = as.formula(paste("~", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+"))),
-    data = d
-  )
+      as.formula(paste("ln_Y ~", paste(X_exog, collapse="+"), "| ", paste(fixed_effects, collapse="+"))),
+      iv = as.formula(paste("~", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+"))),
+      cluster = ~firmid,
+      data = d
+    )
   }
-
+  
   if(iv_command=="felm"){
     pf_model <- felm(
-    as.formula(paste(
-      "ln_Y ~", paste(X_exog, collapse="+"),
-      "|", paste(fixed_effects, collapse="+") , "|", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+")
-    )),
-    data = d
-  )
+      as.formula(paste(
+        "ln_Y ~", paste(X_exog, collapse="+"),
+        "|", paste(fixed_effects, collapse="+") , "|", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+"),
+        "| firmid"
+      )),
+      data = d
+    )
   }
   
   # Summary of results
@@ -319,18 +326,18 @@ for(industry_temp in unique(reg_data$industry)){
   
   # Price correction term
   df[NACE_BR==industry_temp , w_con := 
-      coefs["pf"]       * pf       +
-      coefs["Rshare"]   * Rshare   +
-      coefs["priceL"]   * priceL   +
-      coefs["priceM"]   * priceM   +
-      coefs["priceK"]   * priceK   +
-      coefs["priceL2"]  * priceL2  +
-      coefs["priceM2"]  * priceM2  +
-      coefs["priceK2"]  * priceK2  +
-      coefs["priceLM"]  * priceLM  +
-      coefs["priceLK"]  * priceLK  +
-      coefs["priceMK"]  * priceMK  +
-      coefs["priceLMK"] * priceLMK ]
+       coefs["pf"]       * pf       +
+       coefs["Rshare"]   * Rshare   +
+       coefs["priceL"]   * priceL   +
+       coefs["priceM"]   * priceM   +
+       coefs["priceK"]   * priceK   +
+       coefs["priceL2"]  * priceL2  +
+       coefs["priceM2"]  * priceM2  +
+       coefs["priceK2"]  * priceK2  +
+       coefs["priceLM"]  * priceLM  +
+       coefs["priceLK"]  * priceLK  +
+       coefs["priceMK"]  * priceMK  +
+       coefs["priceLMK"] * priceLMK ]
   
   # Adjust inputs by the price component
   df[NACE_BR==industry_temp , mat_adj := ln_M - w_con]
@@ -354,7 +361,7 @@ for(industry_temp in unique(reg_data$industry)){
     b_ln_L_K_M    = coefs["ln_L_K_M"]
   )]
   
-
+  
   # Output elasticities following the Stata formulas
   df[NACE_BR==industry_temp, 
      elas_mat := b_ln_M + 2 * b_ln_M2 * mat_adj +
@@ -377,18 +384,18 @@ for(industry_temp in unique(reg_data$industry)){
   
   # Markups and demand metric
   df[NACE_BR==industry_temp,
-     , share_mat := raw_materials / nq]
+     share_mat := raw_materials / nq]
   df[NACE_BR==industry_temp,
-     , share_lab := labor_cost / nq]
+     share_lab := labor_cost / nq]
   
   df[NACE_BR==industry_temp,
-     , MU_mat := elas_mat / share_mat]
+     MU_mat := elas_mat / share_mat]
   df[NACE_BR==industry_temp,
-     , MU_lab := elas_lab / share_lab]
+     MU_lab := elas_lab / share_lab]
   df[NACE_BR==industry_temp,
-     , DM := (elas_lab / elas_mat) * (raw_materials / labor_cost)]
-
-
+     DM := (elas_lab / elas_mat) * (raw_materials / labor_cost)]
+  
+  
 }
 
 
@@ -433,6 +440,53 @@ df[, `:=`(
   MU_lab_cs2 = elas_lab_cs2 / share_lab,
   DM_cs2     = (elas_lab_cs2 / elas_mat_cs2) * (raw_materials / labor_cost)
 )]
+
+
+# Create and save comparison plot of markups
+library(ggplot2)
+inputs<-c("mat", "lab", "kap")
+
+for(input in inputs){
+  input<-"mat"
+  elas_col <- paste0("elas_", input)
+  elas_col_cs <- paste0(elas_col, "_cs")
+  MU_col <- paste0("MU_", input)
+  MU_col_cs <- paste0(MU_col, "_cs")
+  DM_col <- paste0("DM")
+  DM_col_cs <- paste0(DM_col, "_cs")
+  
+  ggplot(df[!is.na(get(elas_col)) & !is.infinite(get(elas_col)) & !is.na(get(elas_col_cs)) & !is.infinite(get(elas_col_cs))],
+         aes_string(x=elas_col, y=elas_col_cs)) +
+    geom_point(alpha=0.1) +
+    geom_abline(slope=1, intercept=0) +
+    xlab(paste0("Output elasticity (price control function) - ", input)) +
+    ylab(paste0("Output elasticity (cost share) - ", input)) +
+    ggtitle(paste0("Comparison of output elasticities for input: ", input)) +
+    theme_minimal()
+  ggsave(paste0(output_dir, "elasticity_comparison_", input, ".png"), width=8, height=6)
+  
+  ggplot(df[!is.na(get(DM_col)) & !is.infinite(get(DM_col)) & !is.na(get(DM_col_cs)) & !is.infinite(get(DM_col_cs))],
+         aes_string(x=DM_col, y=DM_col_cs)) +
+    geom_point(alpha=0.1) +
+    geom_abline(slope=1, intercept=0) +
+    xlab("Demand metric (price control function)") +
+    ylab("Demand metric (cost share)") +
+    ggtitle("Comparison of demand metrics from different methods") +
+    theme_minimal()
+  ggsave(paste0(output_dir, "demand_metric_comparison_", input, ".png"), width=8, height=6)
+  
+  ggplot(df[!is.na(MU_mat) & !is.infinite(MU_mat) & !is.na(MU_mat_cs) & !is.infinite(MU_mat_cs)],
+         aes(x=MU_mat, y=MU_mat_cs)) +
+    geom_point(alpha=0.1) +
+    geom_abline(slope=1, intercept=0) +
+    xlab("Markup (price control function)") +
+    ylab("Markup (cost share)") +
+    ggtitle("Comparison of markups from different methods") +
+    theme_minimal()
+  ggsave(paste0(output_dir, "markup_comparison_", input, ".png"), width=8, height=6)
+  
+}
+
 
 
 # -----------------------------------------------------------------------------
