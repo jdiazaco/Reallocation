@@ -279,7 +279,7 @@ fixed_effects <- c("industry", "year_fe")
 
 for(industry_temp in unique(reg_data$industry)){
   
-  industry_temp="2830"
+  # industry_temp="2830"
   
   # Subset & freeze sample (only rows with all needed vars)
   d <- reg_data[industry == industry_temp]
