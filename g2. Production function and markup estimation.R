@@ -300,6 +300,7 @@ for(industry_temp in unique(reg_data$industry)){
     pf_model <- feols(
     as.formula(paste("ln_Y ~", paste(X_exog, collapse="+"), "| ", paste(fixed_effects, collapse="+"))),
     iv = as.formula(paste("~", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+"))),
+    cluster = ~firmid,
     data = d
   )
   }
@@ -308,7 +309,8 @@ for(industry_temp in unique(reg_data$industry)){
     pf_model <- felm(
     as.formula(paste(
       "ln_Y ~", paste(X_exog, collapse="+"),
-      "|", paste(fixed_effects, collapse="+") , "|", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+")
+      "|", paste(fixed_effects, collapse="+") , "|", paste(ENDOG, collapse="+"), " ~ ", paste(IVs, collapse="+"),
+      "| firmid"
     )),
     data = d
   )
