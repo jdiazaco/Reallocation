@@ -5,6 +5,9 @@
 
 # Load project configuration
 source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
+output_dir<-paste0(output_dir, "2025/Export 04.09/")
+output_dir_creator(output_dir)
+
 
 # -----------------------------------------------------------------------------
 # 1. Load data ---------------------------------------------------------------
@@ -55,7 +58,7 @@ firm_index <- product_data[!is.na(ln_growth_p), .(
 
 # Construct industry-year price index to impute missing firm indices
 industry_index <- firm_index[valid==T, .(delta_p_unr_NACE_BR=mean(delta_p_unr, na.rm=T)), by=.(NACE_BR, year)] %>%
-  rbind(data.table(year=2009, delta_p_unr_NACE_BR=100, NACE_BR=unique(.[,NACE_BR])), fill=T) %>%
+  rbind(data.table(year=2009, delta_p_unr_NACE_BR=0, NACE_BR=unique(.[,NACE_BR])), fill=T) %>%
   setorder(NACE_BR, year) %>% .[, P_index_ln_NACE_BR := cumsum(delta_p_unr_NACE_BR), by = NACE_BR]
 
 # Merge industry index to firm index
@@ -71,10 +74,14 @@ firm_index <- merge(CJ(firmid = unique(firm_index$firmid), year = 2009:2021), fi
   .[is.na(delta_p_unr), `:=`(delta_p_unr = delta_p_unr_NACE_BR,
                              impute_flag=1), by = firmid] %>%
   .[, test_delta_p_unr := (na.locf(delta_p_unr, na.rm = FALSE)+na.locf(delta_p_unr, na.rm = FALSE, fromLast=T))/2, by = firmid] %>%
-  .[year==2009, test_delta_p_unr := 100] %>%
-  .[, P_index_ln := cumsum(test_delta_p_unr), by = firmid]
+  .[year==2009, test_delta_p_unr := 0] %>%
+  .[, P_index_ln := cumsum(test_delta_p_unr), by = firmid] %>%
+  .[, P_index_ln := pmin(pmax(P_index_ln, quantile(P_index_ln, 0.01, na.rm = T)), quantile(P_index_ln, 0.99, na.rm=T)), by=year]
 
-firm_price_index <- firm_index[, .(firmid, year, pf = P_index_ln)]
+# ggplot(firm_index, aes(x=P_index_ln))+
+#        geom_histogram()
+
+firm_price_index <- firm_index[, .(firmid, year, pf = exp(P_index_ln))]
 
 # -----------------------------------------------------------------------------
 # 3. Construct market share variables -------------------------------------------
@@ -106,6 +113,11 @@ firm_ms[, Rshare := log(Firm_ms)]
 # -----------------------------------------------------------------------------
 df <- merge(product_summary, firm_price_index, by = c("firmid", "year"), all.x = TRUE) %>%
   merge(firm_ms, by = c("firmid", "year"), all.x = TRUE)
+
+df<-df[, .SD, .SDcols = c("firmid", "NACE_BR", "year", 
+                          "number_of_products", "log_n_products",
+                          "capital", "empl", "labor_cost", "raw_materials", "nq", 
+                          "nuts3", "Firm_ms", "Rshare", "pf")]
 
 setDT(df)
 df <- df[order(firmid, year)]
@@ -175,19 +187,7 @@ df[, `:=`(
   priceLM  = pf * ln_L * ln_M,
   priceLK  = pf * ln_L * ln_K,
   priceMK  = pf * ln_M * ln_K,
-  priceLMK = pf * ln_L * ln_M * ln_K,
-  priceL3  = pf * ln_L3,
-  priceK3  = pf * ln_K3,
-  priceM3  = pf * ln_M3,
-  priceLK2 = pf * ln_L_K2,
-  priceLM2 = pf * ln_L_M2,
-  priceKM2 = pf * ln_K_M2,
-  priceL2K = pf * ln_L2_K,
-  priceL2M = pf * ln_L2_M,
-  priceK2M = pf * ln_K2_M
-  # priceL2KM = pf * ln_L2_K_M,
-  # priceLK2M = pf * ln_L_K2_M,
-  # priceLKM2 = pf * ln_L_K_M2
+  priceLMK = pf * ln_L * ln_M * ln_K
 )]
 
 # Lagged instruments
@@ -199,21 +199,22 @@ lag_vars <- c("ln_L", "ln_L2", "ln_L3", "ln_K", "ln_K2", "ln_K3", "ln_L_K", "ln_
               "pf", "Rshare",
               "priceL", "priceK", "priceM",
               "priceL2", "priceK2", "priceM2",
-              "priceL3", "priceK3", "priceM3",
-              "priceLM", "priceLK", "priceMK", "priceLMK",
-              "priceLK2", "priceLM2", "priceKM2",
-              "priceL2K", "priceL2M", "priceK2M")
+              "priceLM", "priceLK", "priceMK", "priceLMK")
 
 for (v in lag_vars) {
   print(v)
   df[, paste0("l_", v) := shift(get(v)), by = firmid]
 }
+write_rds(df, "production_function_estimation_df.rds")
 
 # -----------------------------------------------------------------------------
-# 4. Estimate production function (IV) --------------------------------------
+# 5. Estimate production function (IV) --------------------------------------
 # -----------------------------------------------------------------------------
 # The specification mirrors the Stata implementation using a translog
 # production function with materials treated as an endogenous input.
+
+df <- readRDS("production_function_estimation_df.rds")
+
 
 iv_formula <- as.formula(ln_Y ~ ln_L + ln_K + ln_L2 + ln_K2 + ln_L_K +
                            l_log_n_products + l_ln_wage +
@@ -249,9 +250,9 @@ reg_data <- df[complete.cases(df[, ..iv_vars])]
 
 # Include industry and year fixed effects using factor variables
 reg_data[, `:=`(industry = factor(NACE_BR), year_fe = factor(year))]
-reg_data<-reg_data[, .SD, .SDcols = c("firmid", "industry", "year_fe", "number_of_products", iv_vars)]
+reg_data<-reg_data[, .SD, .SDcols = c("firmid", "industry", "year_fe", "number_of_products", "nuts3", iv_vars)]
 df<-df[, .SD, .SDcols = c("firmid", "NACE_BR", "year", "number_of_products", 
-                          "capital", "empl", "labor_cost", "raw_materials", "nq", iv_vars)]
+                          "capital", "empl", "labor_cost", "raw_materials", "nq", "nuts3", iv_vars)]
 
 
 X_exog <- c("ln_L","ln_K","ln_L2","ln_K2","ln_L_K",
@@ -276,21 +277,21 @@ IVs   <- paste0("l_", ENDOG)
 all_vars <- c("ln_Y", X_exog, IVs)
 
 iv_command<-"feols"  # "ivreg", "feols", "felm"
-fixed_effects <- c("industry", "year_fe")
+fixed_effects <- c("industry", "year_fe", "nuts3")
 
 for(industry_temp in unique(reg_data$industry)){
   
-  # industry_temp="2830"
-  
+  # industry_temp="2530"
+
   # Subset & freeze sample (only rows with all needed vars)
   d <- reg_data[industry == industry_temp]
   keep <- complete.cases(d[, all_vars, with = FALSE])
   d <- d[keep]
-  
+
   if(nrow(d)<15){
     next
   }
-  
+
   if(iv_command=="ivreg"){
     pf_model <- ivreg(
       as.formula(paste(
@@ -300,7 +301,7 @@ for(industry_temp in unique(reg_data$industry)){
       data = d
     )
   }
-  
+
   if(iv_command=="feols"){
     pf_model <- feols(
       as.formula(paste("ln_Y ~", paste(X_exog, collapse="+"), "| ", paste(fixed_effects, collapse="+"))),
@@ -309,7 +310,7 @@ for(industry_temp in unique(reg_data$industry)){
       data = d
     )
   }
-  
+
   if(iv_command=="felm"){
     pf_model <- felm(
       as.formula(paste(
@@ -320,16 +321,16 @@ for(industry_temp in unique(reg_data$industry)){
       data = d
     )
   }
-  
+
   # Summary of results
   coefs <- coef(pf_model)
-  
+
   # Price correction term
-  df[NACE_BR==industry_temp , w_con := 
+  df[NACE_BR==industry_temp , w_con :=
        coefs["pf"]       * pf       +
        coefs["Rshare"]   * Rshare   +
        coefs["priceL"]   * priceL   +
-       coefs["priceM"]   * priceM   +
+       coefs["priceM"]   * priceM  +
        coefs["priceK"]   * priceK   +
        coefs["priceL2"]  * priceL2  +
        coefs["priceM2"]  * priceM2  +
@@ -337,7 +338,25 @@ for(industry_temp in unique(reg_data$industry)){
        coefs["priceLM"]  * priceLM  +
        coefs["priceLK"]  * priceLK  +
        coefs["priceMK"]  * priceMK  +
-       coefs["priceLMK"] * priceLMK ]
+       coefs["priceLMK"] * priceLMK
+  ]
+  
+  df[NACE_BR==industry_temp, `:=`(
+    b_pf        = coefs["pf"],
+    b_Rshare       = coefs["Rshare"],
+    b_priceL        = coefs["priceL"],
+    b_priceM       = coefs["priceM"],
+    b_priceK      = coefs["priceK"],
+    b_priceL2        = coefs["priceL2"],
+    b_priceM2       = coefs["priceM2"],
+    b_priceK2      = coefs["priceK2"],
+    b_priceLM     = coefs["priceLM"],
+    b_priceLK     = coefs["priceLK"],
+    b_priceMK     = coefs["priceMK"],
+    b_priceLMK     = coefs["priceLMK"]
+  )]
+  
+
   
   # Adjust inputs by the price component
   df[NACE_BR==industry_temp , mat_adj := ln_M - w_con]
@@ -401,7 +420,7 @@ for(industry_temp in unique(reg_data$industry)){
 
 
 # -----------------------------------------------------------------------------
-# 5. Cost share approach ------------------------------------------------------
+# 6. Cost share approach ------------------------------------------------------
 # -----------------------------------------------------------------------------
 # Following the Stata routine, compute output elasticities using median input
 # cost shares within industry-year cells.  We construct the cost of capital as
@@ -443,18 +462,39 @@ df[, `:=`(
 
 
 # Create and save comparison plot of markups
-library(ggplot2)
 inputs<-c("mat", "lab", "kap")
 
+tolerance<-c(-Inf,Inf)
+temp_df<-df[elas_mat %between% tolerance & elas_lab %between% tolerance & elas_kap %between% tolerance]
+test<-df[!(elas_mat %between% tolerance & elas_lab %between% tolerance & elas_kap %between% tolerance)]
+
+test<-merge(test[, .(number_outliers=.N), by=.(NACE_BR)] , 
+            temp_df[, .(number_normal=.N), by=.(NACE_BR)] , by="NACE_BR",
+            all=T) %>%
+  .[, share_outliers:=number_outliers/sum(number_outliers + number_normal, na.rm=T)]%>%
+  .[, share_normal:=number_normal/sum(number_outliers + number_normal, na.rm=T)]
+df[, outlier_flag:=ifelse(elas_mat %between% tolerance & elas_lab %between% tolerance & elas_kap %between% tolerance, 0, 1)]
+
+if(exists("outliers_output")){
+  outliers_output<-unique(rbind(outliers_output, data.table(table(df$outlier_flag, useNA = "always"), range=paste(tolerance, collapse=", ")), fill=T))
+}else{
+  outliers_output<-unique(rbind(data.table(table(df$outlier_flag, useNA = "always"), range=paste(tolerance, collapse=", "))))
+  
+}
+outliers_output[, share:=N/sum(N), by=range]
+
+og_df<-df
+df<-df[outlier_flag==0]
+
 for(input in inputs){
-  input<-"mat"
+  
   elas_col <- paste0("elas_", input)
   elas_col_cs <- paste0(elas_col, "_cs")
   MU_col <- paste0("MU_", input)
   MU_col_cs <- paste0(MU_col, "_cs")
   DM_col <- paste0("DM")
   DM_col_cs <- paste0(DM_col, "_cs")
-  
+
   ggplot(df[!is.na(get(elas_col)) & !is.infinite(get(elas_col)) & !is.na(get(elas_col_cs)) & !is.infinite(get(elas_col_cs))],
          aes_string(x=elas_col, y=elas_col_cs)) +
     geom_point(alpha=0.1) +
@@ -473,7 +513,7 @@ for(input in inputs){
     ylab("Demand metric (cost share)") +
     ggtitle("Comparison of demand metrics from different methods") +
     theme_minimal()
-  ggsave(paste0(output_dir, "demand_metric_comparison_", input, ".png"), width=8, height=6)
+  # ggsave(paste0(output_dir, "demand_metric_comparison_", input, ".png"), width=8, height=6)
   
   ggplot(df[!is.na(MU_mat) & !is.infinite(MU_mat) & !is.na(MU_mat_cs) & !is.infinite(MU_mat_cs)],
          aes(x=MU_mat, y=MU_mat_cs)) +
@@ -499,3 +539,212 @@ saveRDS(df[, .(firmid, year,
                MU_mat_cs2, MU_lab_cs2, DM_cs2,
                elas_mat_cs2, elas_lab_cs2, elas_kap_cs2)],
         file = "production_function_markups.RDS")
+
+# -----------------------------------------------------------------------------
+# 7. Elasticity and markup analysis -------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Bring in patenting products, builr in script f.
+patenting_products <- readRDS("patenting_products_firm_level.RDS")
+
+# Bring in production function estimation results
+elasticities_markups <- readRDS("production_function_markups.RDS") 
+
+# Merge
+patenting_products<-merge(patenting_products, elasticities_markups, by=c("firmid", "year"), all.x=T)
+
+output_dir_og<-output_dir
+output_dir<-paste0(output_dir_og, "markups/")
+if(!dir.exists(output_dir)){
+  output_dir_creator(output_dir)
+}
+output_dir_og<-output_dir
+
+# Set vars and parameters
+age_size_vars<-c("age_size_bucket", "age_size_quartile", "age_size_decile", "age_size_percentile")
+ys<-c("elas_mat", "elas_lab", "elas_kap",
+      "elas_mat_cs", "elas_lab_cs", "elas_kap_cs",
+      "MU_mat", "MU_lab",
+      "MU_mat_cs", "MU_lab_cs")
+patent_var_og<-"patent"
+inno_vars<-c("patent_window", "tm_window")
+# ipcr_var_og<-"ipcr_creat"
+threshold_young<-5
+graphs<-F
+make_summary_stats_flag<-F
+
+# Summary stats per age_size_brackets
+if(make_summary_stats_flag){
+  for(var in age_size_vars){
+    
+    make_summary_stats(patenting_products, 
+                       c("number_of_products",
+                         "empl_bar", "nq_growth", "empl_growth",
+                         "HHI_industry", "av_nq_growth", "within_industry_rev_share",
+                         "tm", "patent"),
+                       var,
+                       paste0("summary_stats_size_age_baseline_vars_", var))
+    
+    make_summary_stats(patenting_products, 
+                       ys,
+                       var,
+                       paste0("summary_stats_size_age_markups_elasticities_", var))
+    
+  }
+}
+
+formulas<-fread("formula, description
+                .[y]  ~ (.[inno_var]) + log(empl_l) | NACE_BR + year, ind
+                .[y]  ~ (.[inno_var])*HHI_industry + log(empl_l) | NACE_BR + year , HHI_industry_ind
+                .[y]  ~ (.[inno_var])*(HHI_quartile==4) + log(empl_l) | NACE_BR + year , HHI_quartile_industry_ind",
+                sep=",")
+
+patenting_products_og <- patenting_products
+
+for(type in c("all_firms")){
+  
+  output_dir<-paste0(output_dir_og, type, "/")
+  if(!dir.exists(output_dir)){
+    output_dir_creator(output_dir)
+  }
+  
+  for(subset in c("all")){ #Age subset
+    
+    patenting_products<-age_data_filter(patenting_products_og, threshold_young, subset)
+    
+    if(type=="patenting_firms"){
+      patenting_products<- patenting_products[firmid %in% patenting_prod_firmids] 
+    }
+    
+    output_dir<-paste0(output_dir_og, type, "/", subset, "/")
+    if(!dir.exists(output_dir)){
+      output_dir_creator(output_dir)
+    }
+    
+    for(y in ys){
+      
+      if(y!="empl_growth" & type=="patenting_firms"){
+        next
+      }
+      
+      
+      for(i in 1:nrow(formulas)){
+        
+        formula_description <- formulas[i, description]
+        formula <- as.formula(formulas[i, formula])
+        
+        
+        for (inno_var in inno_vars){
+          
+          print(paste0(y, " ~ ", inno_var))
+          
+          models<- list("M. Small" = feols(formula, patenting_products[mature_small==1], cluster = "firmid"),
+                        "M. Medium" = feols(formula, patenting_products[mature_medium==1], cluster = "firmid"),
+                        "M. Large" = feols(formula, patenting_products[mature_large==1], cluster = "firmid"),
+                        "Y. Small" = feols(formula, patenting_products[young_small==1], cluster = "firmid"),
+                        "Y. NonSmall" = feols(formula, patenting_products[young_large==1], cluster = "firmid"),
+                        "All" = feols(formula, weights = patenting_products[["nq_bar"]], patenting_products, cluster = "firmid"))
+          
+
+          modelsummary(
+            models,
+            # coef_map = cum_coef_maps,
+            output = paste0(output_dir, "regressions_", y, "_", formula_description, "_", gsub("\\*", "_", inno_var), "_size_cutoffs.tex"),
+            label = paste0("regressions_ipcr_addition_", y, "_", gsub("\\*", "_", inno_var)),
+            stars = TRUE, 
+            # title = tools::toTitleCase(paste0(gsub("_", " ", y), " on ", gsub("_", " ", gsub("\\*", "_", inno_var)), " - Sample: ", subset, " within ", gsub("_", " ", type))),
+            gof_omit = "Std.Errors|R2 Within|R2 Within Adj.|AIC|BIC|Log.Lik.",
+          )
+          
+          models<- list("M. Q1" = feols(formula, patenting_products[mature_q1==1], cluster = "firmid"),
+                        "M. Q4" = feols(formula, patenting_products[mature_q4==1], cluster = "firmid"),
+                        "M. Q10" = feols(formula, patenting_products[mature_q10==1], cluster = "firmid"),
+                        "M. Q100" = feols(formula, patenting_products[mature_q100==1], cluster = "firmid"),
+                        "Y. Q1" = feols(formula, patenting_products[young_q1==1], cluster = "firmid"),
+                        "Y. Q4" = feols(formula, patenting_products[young_q4==1], cluster = "firmid"),
+                        "Y. Q10" = feols(formula, patenting_products[young_q10==1], cluster = "firmid"),
+                        "Y. Q100" = feols(formula, patenting_products[young_q100==1], cluster = "firmid"),
+                        "All" = feols(formula, weights = patenting_products[["nq_bar"]], patenting_products, cluster = "firmid"))
+          
+          modelsummary(
+            models,
+            # coef_map = cum_coef_maps,
+            output = paste0(output_dir, "regressions_", y, "_", formula_description, "_", gsub("\\*", "_", inno_var), "_size_quartiles.tex"),
+            label = paste0("regressions_", y),
+            stars = TRUE, 
+            # title = tools::toTitleCase(paste0(gsub("_", " ", y), " on ", gsub("_", " ", gsub("\\*", "_", inno_var)), " - Sample: ", subset, " within ", gsub("_", " ", type))),
+            gof_omit = "Std.Errors|R2 Within|R2 Within Adj.|AIC|BIC|Log.Lik.",
+          )
+          
+          
+        }
+        
+      }
+
+      if(graphs){
+        
+        tidy_models<-imap(models, function(model, model_name){
+          if(str_detect(inno_var, "\\*")){
+            tidy(model, conf.int=T) %>% 
+              filter(str_detect(term, ".*:.*") | str_detect(term, paste(strsplit(inno_var, "\\*")[[1]], collapse = "|")) |  
+                       str_detect(term, paste(trimws(strsplit(inno_var, "\\+")[[1]]), collapse = "|"))) %>% 
+              mutate(model_label=model_name)
+          }else{
+            tidy(model, conf.int=T) %>% filter(str_detect(term, inno_var)|  
+                                                 str_detect(term, paste(trimws(strsplit(inno_var, "\\+")[[1]]), collapse = "|"))) %>% mutate(model_label=model_name)
+          }
+          
+        })
+        
+        results_df<-bind_rows(tidy_models)
+        setDT(results_df)
+        results_df[, group:=fifelse(grepl("Y.", model_label), "Young", 
+                                    fifelse(grepl("SS", model_label), "Superstar", 
+                                            fifelse(grepl("M.", model_label), "Mature", "All")))]
+        
+        setDT(results_df)
+        results_df[, c("matched_var", "term_clean"):={
+          matched<-NA_character_
+          for(v in vars_interactions){
+            if(str_ends(term, v)){
+              matched<-v
+              break
+            }
+          }
+          cleaned<-if(!is.na(matched)) str_remove(term, paste0(matched)) else "term"
+          list(matched, cleaned)
+        }, by=seq_len(nrow(results_df))]
+        
+        pattern<-paste(paste0(":", vars_interactions), collapse="|")
+        results_df[, term_clean:=str_remove_all(term, pattern)]
+        # results_df<-results_df[!is.na(matched_var)]
+        
+        results_df$model_label <- factor(results_df$model_label, levels=names(models))
+        
+        for(coefficient in unique(results_df$term_clean)){
+          
+          results_df_temp<-results_df[term_clean==coefficient]
+          
+          group_levels<-unique(results_df_temp$group)
+          color_values<-setNames(c( scales::hue_pal()(length(group_levels)-1), "black"), group_levels)
+          
+          ggplot(results_df_temp, aes(x=model_label, y=estimate, ymin=conf.low, ymax=conf.high, color=group))+
+            geom_pointrange()+
+            geom_hline(yintercept = 0, linetype="dashed") + 
+            scale_color_manual(values=color_values)+
+            labs(x=tools::toTitleCase(paste0("Subset")),
+                 y=paste("Estimate (with 95% CI)"))
+          # title=tools::toTitleCase(paste0(gsub("_", " ", gsub("window", "W", y)),
+          #                                 " = ", 
+          #                                 gsub("_", " ", gsub("_window", " W",  gsub("\\*", "× ", inno_var))))),
+          # subtitle = tools::toTitleCase(paste0("Variable: ", gsub(" window", "  W",  gsub(":", " × ", gsub("_", " ", coefficient) )))))+
+          theme(legend.position ="none" )
+          ggsave(paste0(output_dir, "", y, "_", gsub("\\*", "_", inno_var) , "_param_",  gsub(":", " x ", coefficient), ".png"), height=4, width = 7)
+        }
+      }
+      # print(paste0(output_dir, "regressions_ipcr_addition_", y, "_", inno_var, ".tex"))
+    }
+  }
+}
+
+

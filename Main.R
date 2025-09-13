@@ -22,7 +22,7 @@ final<-T
 if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
   main_dir<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
 }else{
-  main_dir<-"C:/Users/nb/Dropbox/Reallocation - shared folder/Code/IWH_code/3 CASD codes/"
+  main_dir<-"~/Reallocation/6 Publish/"
 }
   
  
@@ -46,6 +46,10 @@ source(paste0(tools_dir, "dynamic_reg_reallocation.R"))
 source(paste0(tools_dir, "dynamic_reg_graphs.R"))
 source(paste0(tools_dir, "static_reg_reallocation.R"))
 source(paste0(tools_dir, "add_stars.R"))
+source(paste0(tools_dir, "export_table_latex.R"))
+source(paste0(tools_dir, "age_data_filter.R"))
+
+
 
 
 

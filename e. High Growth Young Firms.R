@@ -117,6 +117,9 @@ product_summary[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))]
 product_summary<-window_var_cretor(product_summary, "firmid", "year", "ipcr_creat", 2, 0, "ipcr_creat_window", na_rm=F)
 rev_growth<-growth_creator(product_summary, "rev", 1) %>% select(firmid, year,rev_l, rev_bar, rev_growth)
 product_summary<-merge(product_summary, rev_growth, by=c("firmid", "year"), all.x = T)
+product_summary[, ever_patent:=as.numeric(any(patent)), by=firmid]
+product_summary[, ever_tm:=as.numeric(any(tm)), by=firmid]
+
 saveRDS(product_summary, "product_firm_data_pre_high_growth.RDS")
 
 
