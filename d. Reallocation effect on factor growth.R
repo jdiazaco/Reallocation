@@ -18,9 +18,9 @@ Last update: 27/02/2025
 # 0) setup -------------------------------------------------------------------
 source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
 folder_name<-""
-output_dir<-paste0(output_dir, "2025/Export 08.05/DRS_part2/")
+output_dir<-paste0(output_dir, "2025/Export 08.05/")
 output_dir_creator(output_dir)
-dummy<-F
+dummy<-T
 
 cpa_or_pf<-"cpa"
 if(cpa_or_pf=="cpa"){
@@ -228,6 +228,8 @@ write_rds(product_core, paste0("product_core", ext, ".RDS"))
 # 2) Data prep for different measures of product entry and exit  --------------------
 # 2.1) Create measures of number of products by product status and entry/exit by pre post exit/entry status -----
 
+###############################################################################
+#
 # Description:
 # This script processes product-level data to construct a firm-year panel 
 # summarizing product dynamics. It aggregates variables related to product 
@@ -251,6 +253,7 @@ write_rds(product_core, paste0("product_core", ext, ".RDS"))
 #
 # Note: The script uses a combination of data.table for aggregation and dplyr 
 # for sequential lag/lead calculations and filtering.
+###############################################################################
 
 
 product_data<-readRDS(paste0("product_level_growth_", filter_indicator,  "_new_core_analysis", ext, ".RDS"))
@@ -366,6 +369,7 @@ saveRDS(product_summary, paste0("product_creation_destruction_eppe", ext, ".RDS"
 
 # 2.2) Lag and lead product entry and exit variables -----
 
+###############################################################################
 # Script: Product Entry/Exit Lag and Lead Variable Generator
 #
 # Description:
@@ -397,6 +401,7 @@ saveRDS(product_summary, paste0("product_creation_destruction_eppe", ext, ".RDS"
 # - This script combines the performance of `data.table` with the flexibility of 
 #   `dplyr::lead()` and `dplyr::lag()` to compute time-relative indicators.
 # - Assumes `digits` is a predefined vector containing product code levels (e.g., 1:5).
+###############################################################################
 
 
 product_summary<- readRDS(paste0("product_creation_destruction_eppe", ext, ".RDS"))
@@ -567,7 +572,6 @@ ggplot(publications_by_year %>% filter(year %in% 1995:2022), aes(x=year)) +
   geom_line(aes(y=pubs_FR, color="FR")) + 
   geom_line(aes(y=pubs_WO, color="WO")) +
   geom_line(aes(y=pubs_EP, color="EP")) + 
-  geom_vline(xintercept=2010, linetype="dashed", color="black", size=0.3) +
   scale_x_continuous(breaks = (seq(1995, 2022, by=1)))+
   labs(title="Patent Grants for French Firms by Geographic Scope", y="Count", x="Year", color="Type") +
   theme_minimal()+
@@ -576,6 +580,111 @@ ggsave(paste0(output_dir, "patents_trends.png"), width=6, height=4, dpi=300)
 
 
 
+
+
+# 4.6) Trademark trend graph -------------------------
+
+# Load and convert to data.table
+tm_data <- read_parquet("tm_patent/tm_record_level_final.parquet")
+inpi_data <- read_excel("C:/Users/nb/Downloads/tm patent tm per year.xlsx", sheet = "Sheet2")
+setDT(tm_data)
+
+# Clean trademark_status field
+tm_data[, trademark_status_clean := str_trim(str_replace_all(trademark_status, "&apos;", "'"))]
+
+# Group trademark statuses
+tm_data[, status_group := fcase(
+  trademark_status_clean %in% c(
+    "Demande déposée", "Application filed",
+    "Demande publiée", "Application published",
+    "Application under examination", "Demande irrecevable après publication"
+  ), "Application",
+  
+  trademark_status_clean %in% c(
+    "Marque enregistrée", "Registered", "Registration pending"
+  ), "Registration",
+  
+  trademark_status_clean %in% c(
+    "Marque renouvelée", "Renouvellement demandé"
+  ), "Renovation",
+  
+  trademark_status_clean %in% c(
+    "Marque expirée", "Registration expired",
+    "Marque annulée", "Registration cancelled",
+    "Marque déchue", "Registration surrendered",
+    "Registration cancellation pending",
+    "Demande totalement rejetée", "Application refused",
+    "Marque ayant fait l'objet d'une renonciation totale",
+    "Application withdrawn",
+    "Marque ayant fait l'objet d'un retrait total"
+  ), "Inactive",
+  
+  trademark_status_clean %in% c("Application opposed", "Appeal pending"), "Opposition",
+  
+  default = "Uncategorized"
+)]
+
+# Filter for 2022 and view frequency
+tm_data_2022 <- tm_data[application_year == 2022]
+print(table(tm_data_2022$status_group))
+
+# Summarize counts by year
+tm_data_year <- tm_data[, .(count = .N), by = .(application_year, trademark_type)] %>% 
+  pivot_wider(names_from  = trademark_type, values_from = count)
+setDT(tm_data_year)
+tm_data_year <- merge(tm_data_year, inpi_data, by.x = "application_year", by.y="year", all.x = T)
+
+ggplot(tm_data_year[application_year>=1995], aes(x = application_year, y = CTMARK)) +
+  geom_line()+
+  # geom_line(aes(y=TMINT, color="International")) + 
+  # geom_line(aes(y=FMARK, color="French")) +
+  # geom_line(aes(y=applications, color="INPI official")) +
+  # 
+  # geom_line(aes(y=CTMARK, color="European")) + 
+  geom_vline(xintercept=2010, linetype="dashed", color="black", size=0.3)+
+  scale_x_continuous(breaks = (seq(1995, 2022, by=5)))+
+  labs(title="Trademark Records by Year", y="Count", x="Year", color="Type") +
+  theme_minimal()
+
+ggsave(paste0(output_dir, "tm_trends.png"), width=6, height=4, dpi=300)
+
+
+ # Summarize counts by year and group
+tm_data_year <- tm_data[, .(count = .N), by = .(trademark_type, status_group, application_year)]
+
+# Optional: Set factor levels for consistent color order in plot
+tm_data_year[, status_group := factor(status_group, levels = c(
+  "Registration", "Application",  "Renovation", "Inactive", "Opposition", "Uncategorized"
+))]
+
+for(type in unique(tm_data_year$trademark_type)){
+  
+  tm_data_year_tmp<-tm_data_year[trademark_type==type]
+  
+  # Plot stacked bar chart
+  ggplot(tm_data_year, aes(x = application_year, y = count, fill = status_group)) +
+    geom_bar(stat = "identity") +
+    labs(
+      title = "Trademark Status by Application Year",
+      subtitle = paste0("Type of Patent: ", type),
+      x = "Application Year",
+      y = "Number of Records",
+      fill = "Status Group"
+    ) +
+    theme_minimal(base_size = 14)
+  ggsave(paste0(output_dir, "tm_trends_", type,".png"), width=6, height=4, dpi=300)
+  
+}
+
+
+
+
+
+
+tm_data[, firmid:=1]
+tm_data[, year:=application_year]
+
+tm_data<-growth_creator(tm_data, "n", 1)
 
 # 5) Analysis of product innovation by firm size and age percentiles ----------------------
 
