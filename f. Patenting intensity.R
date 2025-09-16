@@ -1,6 +1,6 @@
 #' ------------------------------------------------------------------------------
 #' Script: Patent Data Cleaning and Cumulative IPCR/NACE Generation
-#' Author: Julián Díaz-Acosta
+#' Author: Juli?n D?az-Acosta
 #' Last update: 2025-02-27 (optimized 2025-04-03)
 #' ------------------------------------------------------------------------------
 
@@ -48,6 +48,7 @@ years_per_firm <- test[, .(min_year = start, max_year = end), by = firmid]
 all_years <- years_per_firm[, .(application_year = min_year:max_year), by = firmid]
 
 test_expanded <- merge(all_years, test, by = c("firmid", "application_year"), all = TRUE)
+rm(test, years_per_firm, patent_data_upd, nace_ipc_concord); gc()
 setorder(test_expanded, firmid, application_year)
 
 # 6) Efficient cumulative IPCR4 and NACE2 sets ----------------------------------
@@ -94,212 +95,196 @@ saveRDS(ipcr_cumulative, "ipcr_cumulative.RDS")
 
 # 8) IPC analysis -----------------
 
-product_data<-readRDS(paste0("product_level_growth_", filter_indicator, "_.RDS"))
-ipcr_cumulative<-readRDS("ipcr_cumulative.RDS")
-product_summary<-readRDS("product_firm_data_pre_high_growth.RDS")
-br_industry_HHI <- readRDS("br_industry_HHI.RDS")
+product_data<-readRDS(paste0("product_level_growth_", filter_indicator, "_.RDS")) # Product level data (from a.)
+ipcr_cumulative<-readRDS("ipcr_cumulative.RDS") # From above
+br_industry_HHI <- readRDS("br_industry_HHI.RDS") # Industry data (from c.)
+patenting_products <-readRDS("product_firm_data_pre_high_growth.RDS") %>% # Product information aggregated at the firm level (from e.)
+  .[abs(empl_growth)!=2 & abs(nq_growth)!=2 & abs(rev_growth)!=2] %>%
+    select(firmid, year, NACE_BR,  young,
+         patent, patent_window, ever_patent,
+         size, young, firm_age, number_of_products, 
+         # superstar, superstar_cr4, superstar_tfp_99, superstar_tfp_90,
+         prod_creat, prod_destr, 
+         within_economy_rev_share_BR, within_industry_rev_share,
+         tm, tm_window, ever_tm,
+         new_products, first_introduction, 
+         net_product_creat, net_product_creat_window,
+         net_product_destr, net_product_destr_window,
+         empl_bar, empl_l, empl_growth, nq_growth, nq_bar, 
+         capital, capital_growth,
+         tfp_growth, tfp_bar, rev_growth, rev_bar,
+         size_quartile, size_decile, size_percentile,            
+         age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile,
+         ipcr_cum, NACE_cum, n_ipcr, n_NACE, n_NACE_bar, n_ipcr_bar, n_NACE_growth, 
+         n_ipcr_growth, ipcr_cum_l, NACE_cum_l, new_ipcr, new_NACE, ipcr_creat)
 
-
+# Identify firms that have patented at some point
 ipcr_firmids<-unique(ipcr_cumulative$firmid) # length(ipcr_firmids) 118129
-prod_firmids<-unique(product_summary$firmid) # length(prod_firmids) 70354
+prod_firmids<-unique(patenting_products$firmid) # length(prod_firmids) 70354
 patenting_prod_firmids<-intersect(ipcr_firmids, prod_firmids) # length(patenting_prod_firmids) 9109
 
-#patenting_products<- product_summary[firmid %in% patenting_prod_firmids] %>% 
-product_summary <- product_summary[abs(empl_growth)!=2 & abs(nq_growth)!=2 & abs(rev_growth)!=2]
-
-patenting_products<- product_summary %>%   select(firmid, year, NACE_BR, nuts3, young,
-                                                  patent, patent_window, ever_patent,
-                                                  size, young, firm_age, number_of_products, 
-                                                  superstar, superstar_cr4, superstar_tfp_99, superstar_tfp_90,
-                                                  prod_creat, prod_destr, 
-                                                  within_economy_rev_share_BR, within_industry_rev_share,
-                                                  tm, tm_window, ever_tm,
-                                                  new_products, first_introduction, 
-                                                  net_product_creat, net_product_creat_window,
-                                                  net_product_destr, net_product_destr_window,
-                                                  empl_bar, empl_l, empl_growth, nq_growth, nq_bar, 
-                                                  tfp_growth, tfp_bar, rev_growth, rev_bar)
-
-patenting_products<-merge(patenting_products, ipcr_cumulative, by=c("firmid", "year"), all.x=T)
-
 # Create important variables and clean data
-patenting_products[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))]
-patenting_products<-window_var_cretor(patenting_products, "firmid", "year", "ipcr_creat", 2,0, "ipcr_creat_window", na_rm=F)
-patenting_products[, `:=`(log_firm_age=log(firm_age),
-                          log_empl_bar=log(empl_bar))]
+patenting_products[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))] %>% # Treat NA as 0 for ipcr_creat
+  window_var_cretor("firmid", "year", "ipcr_creat", 2,0, "ipcr_creat_window", na_rm=F) %>%  # Create 2-year window for ipcr_creat
+  .[, `:=`(log_firm_age=log(firm_age),
+           log_empl_bar=log(empl_bar))] %>%
+  .[, product_innovative_patent_window:=net_product_creat_window*patent_window] %>% # Interaction between product creation and patenting
+  .[, product_strategic_patent_window:=(1-net_product_creat_window)*patent_window] # Interaction between lack of product creation and patenting
 
-rev_share_growth<-growth_creator(patenting_products, c("within_economy_rev_share_BR", "within_industry_rev_share"), 1)
-rev_share_growth<-rev_share_growth %>% select(firmid, year, 
-                                              within_economy_rev_share_BR_growth, within_economy_rev_share_BR_l,  
-                                              within_industry_rev_share_growth, within_industry_rev_share_l)
+# Create revenue share growth variables
+rev_share_growth<-growth_creator(patenting_products, c("within_economy_rev_share_BR", "within_industry_rev_share"), 1)  %>% 
+  select(firmid, year, 
+         within_economy_rev_share_BR_growth, within_economy_rev_share_BR_l,  
+         within_industry_rev_share_growth, within_industry_rev_share_l)
+
+# Merge all data
 patenting_products<- merge(patenting_products, rev_share_growth, by=c("firmid", "year"), all.x = T)
-
-br_industry_HHI<-br_industry_HHI[, HHI_quartile:=ntile(HHI_industry, 4), by=.(year)]
-br_industry_HHI<-br_industry_HHI[, HHI_decile:=ntile(HHI_industry, 10), by=.(year)]
-br_industry_HHI<-br_industry_HHI[, HHI_percentile:=ntile(HHI_industry, 100), by=.(year)]
 patenting_products<-merge(patenting_products, br_industry_HHI, by=c("NACE_BR", "year"), all.x=T) 
+rm(rev_share_growth, br_industry_HHI, ipcr_cumulative); gc()
 
-patenting_products <- patenting_products %>%
-  .[, product_innovative_patent_window:=net_product_creat_window*patent_window] %>%
-  .[, product_strategic_patent_window:=(1-net_product_creat_window)*patent_window]
-
-
-patenting_products[, size_quartile:=ntile(empl_bar, 4), by=.(year, NACE_BR)]
-patenting_products[, size_decile:=ntile(empl_bar, 10), by=.(year, NACE_BR)]
-patenting_products[, size_percentile:=ntile(empl_bar, 100), by=.(year, NACE_BR)]
-
-patenting_products[, `:=`(young_small=fifelse(young==1 & size=="small", 1, 0))]
-patenting_products[, `:=`(young_large=fifelse(young==1 & size!="small", 1, 0))]
-patenting_products[, `:=`(mature_small=fifelse(young==0 & size=="small", 1, 0))]
-patenting_products[, `:=`(mature_medium=fifelse(young==0 & size=="medium", 1, 0))]
-patenting_products[, `:=`(mature_large=fifelse(young==0 & size=="large", 1, 0))]
-
-patenting_products[, `:=`(young_q1=fifelse(young==1 & size_quartile==1, 1, 0))]
-patenting_products[, `:=`(young_q2=fifelse(young==1 & size_quartile==2, 1, 0))]
-patenting_products[, `:=`(young_q3=fifelse(young==1 & size_quartile==3, 1, 0))]
-patenting_products[, `:=`(young_q4=fifelse(young==1 & size_quartile==4, 1, 0))]
-patenting_products[, `:=`(young_q10=fifelse(young==1 & size_decile==10, 1, 0))]
-patenting_products[, `:=`(young_q100=fifelse(young==1 & size_percentile==100, 1, 0))]
+# patenting_products[, `:=`(young_q1=fifelse(young==1 & size_quartile==1, 1, 0))]
+# patenting_products[, `:=`(young_q2=fifelse(young==1 & size_quartile==2, 1, 0))]
+# patenting_products[, `:=`(young_q3=fifelse(young==1 & size_quartile==3, 1, 0))]
+# patenting_products[, `:=`(young_q4=fifelse(young==1 & size_quartile==4, 1, 0))]
+# patenting_products[, `:=`(young_q10=fifelse(young==1 & size_decile==10, 1, 0))]
+# patenting_products[, `:=`(young_q100=fifelse(young==1 & size_percentile==100, 1, 0))]
+# 
+# patenting_products[, `:=`(mature_q1=fifelse(young==0 & size_quartile==1, 1, 0))]
+# patenting_products[, `:=`(mature_q2=fifelse(young==0 & size_quartile==2, 1, 0))]
+# patenting_products[, `:=`(mature_q3=fifelse(young==0 & size_quartile==3, 1, 0))]
+# patenting_products[, `:=`(mature_q4=fifelse(young==0 & size_quartile==4, 1, 0))]
+# patenting_products[, `:=`(mature_q10=fifelse(young==0 & size_decile==10, 1, 0))]
+# patenting_products[, `:=`(mature_q100=fifelse(young==0 & size_percentile==100, 1, 0))]
 
 
-
-patenting_products[, `:=`(mature_q1=fifelse(young==0 & size_quartile==1, 1, 0))]
-patenting_products[, `:=`(mature_q2=fifelse(young==0 & size_quartile==2, 1, 0))]
-patenting_products[, `:=`(mature_q3=fifelse(young==0 & size_quartile==3, 1, 0))]
-patenting_products[, `:=`(mature_q4=fifelse(young==0 & size_quartile==4, 1, 0))]
-patenting_products[, `:=`(mature_q10=fifelse(young==0 & size_decile==10, 1, 0))]
-patenting_products[, `:=`(mature_q100=fifelse(young==0 & size_percentile==100, 1, 0))]
-
-
-
-patenting_products<-patenting_products %>% mutate(age_size_bucket=case_when(young_small==1 ~ "young_small",
-                                                                            young_large==1 ~ "young_large",
-                                                                            mature_small==1 ~ "mature_small",
-                                                                            mature_medium==1 ~ "mature_medium",
-                                                                            mature_large==1 ~ "mature_large",
-                                                                            young_q1==1 ~ "young_q1",
-                                                                            young_q2==1 ~ "young_q2",
-                                                                            young_q3==1 ~ "young_q3",
-                                                                            young_q4==1 ~ "young_q4",
-                                                                            T ~ NA))
-
-patenting_products<-patenting_products %>% mutate(age_size_quartile=case_when(young_q1==1 ~ "young_q1",
-                                                                              young_q2==1 ~ "young_q2",
-                                                                              young_q3==1 ~ "young_q3",
-                                                                              young_q4==1 ~ "young_q4",
-                                                                              mature_q1==1 ~ "mature_q1",
-                                                                              mature_q2==1 ~ "mature_q2",
-                                                                              mature_q3==1 ~ "mature_q3",
-                                                                              mature_q4==1 ~ "mature_q4",
-                                                                              T ~ NA))
-
-patenting_products<-patenting_products %>% mutate(age_size_decile=case_when(young_q10==1 ~ "top decile",
-                                                                            T ~ "rest"))
-
-patenting_products<-patenting_products %>% mutate(age_size_percentile=case_when(young_q100==1 ~ "top percentile",
-                                                                                T ~ "rest"))
-
-generate_latex_summary_dt<-function(dt, cat_vars, num_vars){
-  # Convert to data.table if not already
-  if(!is.data.table(dt)) dt <- as.data.table(dt)
-  summary_list<-list()
-  
-  # Udentify numeric columns
-  for(cat_var in cat_vars){
-    temp <- dt[, c(lapply(.SD, mean, na.rm=T),
-                   .(`N. obs`=.N)), by=cat_var, .SDcols=num_vars]
-    
-    for(var in num_vars){
-      temp[[var]]<-ifelse(temp[[var]]<1, round(temp[[var]], 4), round(temp[[var]],2))
-    }
-    
-    temp[, Variable:=cat_var]
-    setnames(temp, cat_var, "Level")
-    setcolorder(temp, c("Variable", "Level", num_vars))
-    summary_list[[cat_var]]<-temp
-  }
-  summary_dt<-rbindlist(summary_list, use.names = T, fill=T)
-}
-
-cat_vars<-c("young_small", "young_large", "mature_small", "mature_medium", "mature_large",
-            "young_q1","young_q2","young_q3","young_q4",
-            "mature_q1","mature_q2","mature_q3","mature_q4")
-
-vars<-fread("var, description
-            number_of_products, n products
-            empl_bar, empl
-            nq_growth, rev growth
-            empl_growth, empl growth
-            HHI_industry, HHI
-            av_nq_growth, av. ind. growth
-            within_industry_rev_share, av. rev. share
-            tm, tm
-            patent, patent")
-
-test<-generate_latex_summary_dt(patenting_products, cat_vars, 
-                                vars$var)
-names(test)<-c("Variable", "Level", vars$description, "N. Obs")
-test<-test[Level==1]%>% select(-Level) 
-latex_table<-capture.output( print(xtable(test, auto=T), include.rownames = F))
-writeLines(latex_table, paste0(output_dir, "summary_stats_size_age.tex"))
 
 write_rds(patenting_products, "patenting_products_firm_level.RDS")
 
 
 # 8a) Growth, patenting and trademarking -----------------
 
+patenting_products<-read_rds("patenting_products_firm_level.RDS")
 
-ys<-c("net_product_creat_window", "nq_growth", "within_industry_rev_share_growth")#, "rev_growth")
+ys<-c("nq_growth", "empl_growth", "rev_growth", "within_industry_rev_share_growth")#, "rev_growth")
 patent_var_og<-"patent"
 ipcr_var_og<-"ipcr_creat"
 threshold_young<-5
-
 output_dir_og<-output_dir
 patenting_products_og<-patenting_products
-
-
 inno_vars_og<-c("tm_window", "tm_window*net_product_creat_window", "patent_window", "patent_window*net_product_creat_window", "net_product_destr_window", "net_product_creat_window", "patent_window + ipcr_creat_window")
-
 graphs<-T
 
 
-patenting_products<-patenting_products_og[, `:=`(young_small=fifelse(young==1 & size=="small", 1, 0))]
-patenting_products<-patenting_products_og[, `:=`(young_large=fifelse(young==1 & size!="small", 1, 0))]
-patenting_products<-patenting_products_og[, `:=`(mature_small=fifelse(young==0 & size=="small", 1, 0))]
-patenting_products<-patenting_products_og[, `:=`(mature_medium=fifelse(young==0 & size=="medium", 1, 0))]
-patenting_products<-patenting_products_og[, `:=`(mature_large=fifelse(young==0 & size=="large", 1, 0))]
+# patenting_products<-patenting_products_og[, `:=`(young_small=fifelse(young==1 & size=="small", 1, 0))]
+# patenting_products<-patenting_products_og[, `:=`(young_large=fifelse(young==1 & size!="small", 1, 0))]
+# patenting_products<-patenting_products_og[, `:=`(mature_small=fifelse(young==0 & size=="small", 1, 0))]
+# patenting_products<-patenting_products_og[, `:=`(mature_medium=fifelse(young==0 & size=="medium", 1, 0))]
+# patenting_products<-patenting_products_og[, `:=`(mature_large=fifelse(young==0 & size=="large", 1, 0))]
 
 
-generate_latex_summary_dt<-function(dt, cat_vars, num_vars){
-  # Convert to data.table if not already
-  if(!is.data.table(dt)) dt <- as.data.table(dt)
-  summary_list<-list()
+# titles, restrictions, and weights as columns in a table; formula as input
+model_table <- data.table(
+    title = c("M. Small", "M. Medium", "M. Large", "Y. Small", "Y. NonSmall", "All"),
+    restriction = c("mature_small==1", "mature_medium==1", "mature_large==1", "young_small==1", "young_large==1", NA),
+    weight = c(NA, NA, NA, NA, NA, "nq_bar")
+  )
+
+
+model_table<-fread("y, x, controls, fe, title, restriction, weight, description")
+ys<-c("nq_growth", "empl_growth", "rev_growth", "within_industry_rev_share_growth")#, "rev_growth")
+xs<-c("tm_window", "tm_window*net_product_creat_window", "patent_window", "patent_window*net_product_creat_window", "net_product_destr_window", "net_product_creat_window", "patent_window + ipcr_creat_window")
+controls<-c("log(empl_l)")
+fe<-c("", "firmid + year", "NACE_BR + year", "NACE_BR^year")
+
+create_model_table <- function(ys, xs, controls, fe) {
+  # Create all combinations of ys, xs, controls, and fe
+  combinations <- expand.grid(
+    y = ys,
+    x = xs,
+    control = controls,
+    fixed_effect = fe,
+    stringsAsFactors = FALSE
+  )
   
-  # Udentify numeric columns
-  for(cat_var in cat_vars){
-    temp <- dt[, lapply(.SD, mean, na.rm=T), by=cat_var, .SDcols=num_vars]
-    
-    for(var in num_vars){
-      temp[[var]]<-ifelse(temp[[var]]<1, round(temp[[var]], 4), round(temp[[var]],2))
-    }
-    
-    temp[, Variable:=cat_var]
-    setnames(temp, cat_var, "Level")
-    setcolorder(temp, c("Variable", "Level", num_vars))
-    summary_list[[cat_var]]<-temp
-  }
-  summary_dt<-rbindlist(summary_list, use.names = T, fill=T)
+  # Add the formula column
+  combinations$formula <- apply(combinations, 1, function(row) {
+    paste0(row["y"], " ~ ", row["x"], " + ", row["control"], " | ", row["fixed_effect"])
+  })
+  
+  # Add the description column
+  combinations$description <- apply(combinations, 1, function(row) {
+    paste0(
+      row["y"], "_", which(ys == row["y"]), "_",
+      row["x"], "_", which(xs == row["x"]), "_",
+      row["control"], "_", which(controls == row["control"]), "_",
+      row["fixed_effect"], "_", which(fe == row["fixed_effect"])
+    )
+  })
+  
+  # Convert to data.table for easier manipulation
+  model_table <- data.table::as.data.table(combinations)
+  
+  return(model_table)
 }
 
-cat_vars<-c("young_small", "young_large", "mature_small", "mature_medium", "mature_large")
+model_table <- create_model_table(ys, xs, controls, fe)
 
-test<-generate_latex_summary_dt(patenting_products, cat_vars, 
-                                c("number_of_products", "empl_bar", "nq_growth", "empl_growth", 
-                                  "within_industry_rev_share", "within_industry_rev_share_growth",
-                                  "tm", "patent"))
-test<-test[Level==1]%>% select(-Level)
-latex_table<-capture.output( print(xtable(test), include.rownames = F))
-writeLines(latex_table, paste0(output_dir, "summary_stats_size_age.tex"))
+
+
+title<-c("M. Small", "M. Medium", "M. Large", "Y. Small", "Y. NonSmall", "All")
+restriction = c("mature_small==1", "mature_medium==1", "mature_large==1", "young_small==1", "young_large==1", NA)
+weight <- sapply(ys, function(y) {  if (grepl("growth", y)) {    sub("growth", "bar", y)  } else {    "empl_bar"  })
+
+
+
+formula<-as.formula(".[y]  ~ (.[inno_var]) + log(empl_l) | NACE_BR^year")
+
+formulas<-c(".[y]  ~ (.[inno_var])",
+            ".[y]  ~ (.[size_var])*(.[concentration_var])")
+
+
+model_table<-fread("formula, description
+                .[y]  ~ log_empl_bar*HHI_industry + av_nq_growth + young | firmid + year, emp_interaction_firmfe
+                .[y]  ~ log_empl_bar + within_industry_rev_share*HHI_industry + av_nq_growth + young | firmid + year, rev_interaction_firmfe
+                .[y]  ~ log_empl_bar*HHI_industry + av_nq_growth + young | NACE_BR + year, emp_interaction_industryfe
+                .[y]  ~ log_empl_bar + within_industry_rev_share*HHI_industry + av_nq_growth + young | NACE_BR + year, rev_interaction_industryfe
+                .[y]  ~ log_empl_bar*(HHI_quartile==4) + av_nq_growth + young | firmid + year, emp_HHIq_firmfe
+                .[y]  ~ log_empl_bar + within_industry_rev_share*(HHI_quartile==4) + av_nq_growth + young | firmid + year, rev_HHIQ_firmfe",
+                
+                sep=",")
+
+
+
+
+age_size_regressions<-function(data, formula, output_dir, type, subset){
+  print(paste0(y, " ~ ", inno_var))
+  
+
+  models <- setNames(vector("list", nrow(model_table)), model_table$title)
+  for (i in seq_len(nrow(model_table))) {
+
+    title <- model_table$title[i]
+    restriction <- model_table$restriction[i]
+    weight <- model_table$weight[i]
+
+    if (is.na(model_table$restriction[i])) {
+      # "All" case
+      models[[i]] <- feols(formula, data, weights = if (!is.na(weight)) data[[weight]] else NULL)
+    } else {
+      models[[i]] <- feols(formula, data[eval(parse(text=restriction))], , weights = if (!is.na(model_table$weight[i])) data[[model_table$weight[i]]] else NULL)
+    }
+  }
+  
+  modelsummary(
+    models,
+    output = paste0(output_dir, "regressions_ipcr_addition_", y, "_", gsub("\\*", "_", inno_var) , ".tex"),
+    label = paste0("regressions_ipcr_addition_", y, "_", gsub("\\*", "_", inno_var)),
+    stars = TRUE, 
+    gof_omit = "Std.Errors|R2 Within|R2 Within Adj.|AIC|BIC|Log.Lik.",
+  )
+  
+  print(paste0(output_dir, "regressions_ipcr_addition_", y, "_", inno_var, ".tex"))
+}
 
 # For nq, empl, prod_Creat variables, segmenting the sample
 for(type in c("all_firms")){
@@ -443,8 +428,8 @@ for(type in c("all_firms")){
                    y=paste("Estimate (with 95% CI)"))
                    # title=tools::toTitleCase(paste0(gsub("_", " ", gsub("window", "W", y)),
                    #                                 " = ", 
-                   #                                 gsub("_", " ", gsub("_window", " W",  gsub("\\*", "× ", inno_var))))),
-                   # subtitle = tools::toTitleCase(paste0("Variable: ", gsub(" window", "  W",  gsub(":", " × ", gsub("_", " ", coefficient) )))))+
+                   #                                 gsub("_", " ", gsub("_window", " W",  gsub("\\*", "? ", inno_var))))),
+                   # subtitle = tools::toTitleCase(paste0("Variable: ", gsub(" window", "  W",  gsub(":", " ? ", gsub("_", " ", coefficient) )))))+
               theme(legend.position ="none" )
             ggsave(paste0(output_dir, "", y, "_", gsub("\\*", "_", inno_var) , "_param_",  gsub(":", " x ", coefficient), ".png"), height=4, width = 7)
           }
@@ -597,23 +582,12 @@ for(diff_var in c("size", "young")){
 
 # 9) Patenting trademarking analysis -----------------
 
-  
 patenting_products <- readRDS("patenting_products_firm_level.RDS")
-
 ys<-c("patent_window", "empl_growth")
 patent_var_og<-"patent"
-# ipcr_var_og<-"ipcr_creat"
 threshold_young<-5
-
 output_dir_og<-output_dir
-
-
-# inno_vars_og<-c("tm_window", "tm_window*net_product_creat_window", "patent_window", "patent_window*net_product_creat_window", "net_product_destr_window", "net_product_creat_window", "patent_window + ipcr_creat_window")
-
 graphs<-F
-
-
-# For nq, empl, prod_Creat variables, segmenting the sample
 output_dir_og<-output_dir
 
 formulas<-fread("formula, description
@@ -798,8 +772,8 @@ for(type in c("all_firms", "patenting_firms")){
                  y=paste("Estimate (with 95% CI)"))
           # title=tools::toTitleCase(paste0(gsub("_", " ", gsub("window", "W", y)),
           #                                 " = ", 
-          #                                 gsub("_", " ", gsub("_window", " W",  gsub("\\*", "× ", inno_var))))),
-          # subtitle = tools::toTitleCase(paste0("Variable: ", gsub(" window", "  W",  gsub(":", " × ", gsub("_", " ", coefficient) )))))+
+          #                                 gsub("_", " ", gsub("_window", " W",  gsub("\\*", "? ", inno_var))))),
+          # subtitle = tools::toTitleCase(paste0("Variable: ", gsub(" window", "  W",  gsub(":", " ? ", gsub("_", " ", coefficient) )))))+
           theme(legend.position ="none" )
           ggsave(paste0(output_dir, "", y, "_", gsub("\\*", "_", inno_var) , "_param_",  gsub(":", " x ", coefficient), ".png"), height=4, width = 7)
         }

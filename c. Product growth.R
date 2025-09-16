@@ -26,58 +26,6 @@ source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
 output_dir<-paste0(output_dir, "2025/Export 27.03/")
 output_dir_creator(output_dir)
 
-#1) Data import and cleaning (fixing NACE codes, reconstructing lag and reallocation measures, selecting only relevant variables) ------------------------------------
-
-# Bring in firm data, product data and NACE industry information
-firm_data<-readRDS('sbs_br_combined_cleaned.rds') #Coming from "a. Data preparation.R" part 2
-product_data<-readRDS(paste0("product_level_growth_", filter_indicator,  "_cpa_.RDS")) #Coming from "a. Data preparation.R" part 4
-nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
-nace_ind_sector <- read_excel("NACE_industry_sector.xlsx")
-
-
-firm_data_select <- firm_data %>% select(firmid, year, 
-                                         empl, empl_l, empl_bar, empl_growth,
-                                         nq, nq_l, nq_bar, nq_growth, 
-                                         capital, capital_l, capital_bar, capital_growth, 
-                                         labor_cost, raw_materials, tfp,
-                                         t_l, t_k, t_m,
-                                         nq_capital, nq_raw_materials, nq_empl,
-                                         born, died, size, young,
-                                         NACE_BR, firm_birth_year, nq, firm_age, NACE_2d,
-                                         high_tech, superstar,
-                                         grep("emp", names(firm_data)),
-                                         grep("comp", names(firm_data)),
-                                         -empl_share, -empl_growth_weighted, -empl_reallocation, -empl_reallocation_weighted)
-setDT(firm_data_select)
-
-#Bring in lagged variables to firm data and create measures of firm-level revenue growth using revenue information from the business registry
-# firm_data_select<-merge(firm_data_select, firm_data_lag, by=c("firmid", "year"), all.x = T)
-# firm_data_select[, nq_bar := .5*(nq + nq_l)]
-# firm_data_select[, nq_growth := ifelse(nq_bar != 0, (nq - nq_l)/nq_bar, 0)]
-# firm_data_select[, nq_reallocation := ifelse(nq_bar != 0, abs(nq - nq_l)/nq_bar, 0)]
-saveRDS(firm_data_select, "firm_data_select.RDS")
-
-test<-read_rds("firm_data_select.RDS")
-
-#Conduct NACE concordance
-# CAUTION: the concordance operation can take up to 8 hours to run
-test<-firm_data_select
-test$NACE_BR_og<-test$NACE_BR
-test<-conc(DT=test,
-           id='firmid',
-           t='year',
-           ind='NACE_BR',
-           foryears = c(1994:2007),
-           toyears =c(2008:2021),
-           concfile=nace_concordance,
-           origin_class='nace_rev11_digit4',
-           target_class='nace_rev2_digit4')
-firm_data_select<-test
-saveRDS(test, "firm_data_select_NACE_concorded.RDS")
-#After concording, I noticed some firms may not have been well concorded (e.g. firm 05480546,
-# for which NACE code up to 2008 is concorded as 2222)
-#Because of this, for now I carry on with the analysis without the concordance
-
 #1*) Data import and cleaning (calculate industry HHI and median size, select only prodcom firms/sector, create product growth dataset)------------------------------------
 
 #Bring in necessary firm and product information
@@ -127,24 +75,54 @@ firm_data_select[, sector_NACE:=substr(DEFind,1,1)]
 firm_data_select$DEFind<-NULL
 firm_data_select[, birth_year := min(year), by = firmid]
 firm_data_select[!is.na(birth_year) & birth_year == year, empl_l:= 0]
-firm_data_lag<-NULL
 
 ## Filter by prodcom firms or sectors
 firm_data_select_prodcom_firms<-firm_data_select[firmid %in% prodcom_firms]
 firm_data_select_prodcom_sectors <- firm_data_select[ sector_NACE %in% prodcom_sectors]
 
 # Remove outliers
-# test<-readRDS("sbs_br_data_prodcom_firms.RDS")
-# table(test$size)
-# table(firm_data_select_prodcom_firms$size)
 firm_data_select_prodcom_firms<-outliers_remove(firm_data_select_prodcom_firms, 0.01)
 
-# Bring in Alex's linkedin data
-# linkedin = read_parquet('french_affiliated_firm_roles_collapsed_clean.parquet') %>%
-#   select(-c(rcid, `__index_level_0__`)) 
-# firm_data_select_prodcom_firms <- merge(firm_data_select_prodcom_firms, linkedin, by=c("firmid", "year"), all.x=T)
-# firm_data_select_prodcom_firms <- firm_data_select_prodcom_firms[, log_emp_rnd:=log(emp_rnd)]
-# firm_data_select_prodcom_firms[, log_emp_rnd:=ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
+### Size quantiles and age brackets
+# 1) Compute quartile/decile/percentile within (year, NACE_BR)
+firm_data_select_prodcom_firms[, `:=`(
+  .r = frank(empl_bar, ties.method = "average", na.last = "keep"),
+  N  = .N), by = .(year, NACE_BR)] %>%
+  
+  .[, `:=`(
+    size_quartile    = as.integer(pmin(4L,  ceiling(4  * .r / N))),
+    size_decile      = as.integer(pmin(10L, ceiling(10 * .r / N))),
+    size_percentile  = as.integer(pmin(100L, ceiling(100 * .r / N)))
+  )] %>% .[, c(".r","N") := NULL] %>%
+  
+  
+  # 2) Build the categorical buckets
+  #   a) young/mature x small/medium/large
+  .[, age_size_bucket :=
+      fcase(
+        young == 1 & size == "small",  "young_small",
+        young == 1 & size != "small",  "young_large",
+        young == 0 & size == "small",  "mature_small",
+        young == 0 & size == "medium", "mature_medium",
+        young == 0 & size == "large",  "mature_large",
+        default = NA_character_
+      )
+  ] %>%
+  
+  #   b) young/mature x quartile (compact construction)
+  .[, age_size_quartile := ifelse(is.na(young) | is.na(size_quartile), NA,
+                                  paste0(fifelse(young == 1, "young", "mature"), "_q", size_quartile))
+  ] %>%
+  
+  #   c) top decile among the young vs rest
+  .[, age_size_decile :=
+      fifelse(young == 1 & size_decile == 10L, "top decile", "rest")
+  ] %>%
+  
+  #   d) top percentile among the young vs rest
+  .[, age_size_percentile :=
+      fifelse(young == 1 & size_percentile == 100L, "top percentile", "rest")
+  ]
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 saveRDS(firm_data_select_prodcom_firms, "sbs_br_data_prodcom_firms.RDS")
