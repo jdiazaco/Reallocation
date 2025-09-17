@@ -1,6 +1,13 @@
 # libraries
 rm(list = ls())
 gc()
+
+# Set global options
+options(
+  source.defaults = list(echo = TRUE, stop.on.error = TRUE)
+)
+
+
 packages = c('data.table', 'haven', 'readxl', 'openxlsx','stringr', 'readr', 'dplyr', 
              'tidyverse', 'zoo', 'reshape2','rstudioapi', "plm", 'foreign', "fixest", 
              'data.table', 'haven', 'stringr', 'readr', 'dplyr',
@@ -49,6 +56,8 @@ source(paste0(tools_dir, "add_stars.R"))
 source(paste0(tools_dir, "export_table_latex.R"))
 source(paste0(tools_dir, "age_data_filter.R"))
 source(paste0(tools_dir, "create_formulas.R"))
+source(paste0(tools_dir, "regression_innovation_growth.R"))
+source(paste0(tools_dir, "remove_special_chars.R"))
 
 
 
@@ -64,6 +73,7 @@ output_dir<-paste0(main_dir, "3 Output/")
 
 # Create output_dir
 output_dir_creator(output_dir)
+output_dir_creator(paste0(main_dir, "2 Data/firm_lists/"))
 
 # Set parameters for prodfra-pcc8 and excluded industries
 exclude_industries<-TRUE

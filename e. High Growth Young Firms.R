@@ -28,8 +28,10 @@ if(cpa_or_pf=="cpa"){
 
 # 0) Clean data --------------------------------------------------------------
 
-#Bring in necessary firm and product information
-firm_data_select<-readRDS("sbs_br_data_prodcom_firms.RDS") %>% filter(year>2009) # Coming from code c. 
+for(firm_subset in c("prodcom", "all")){
+  
+  #Bring in necessary firm and product information
+firm_data_select<-readRDS( paste0("sbs_br_data_", firm_subset, "_firms.RDS")) %>% filter(year>2009) # Coming from code c. 
 nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
 product_data<-readRDS(paste0("product_level_growth_", filter_indicator, ext, "_.RDS")) # Coming from code d. 
 
@@ -39,7 +41,8 @@ patent_tm_data<-readRDS("patent_tm_clean.RDS")
 setDT(patent_tm_data)
 
 # Check only prodcom firms are present in the firm_data_select sample
-if(length(setdiff(unique(firm_data_select$firmid), unique(product_data$firmid)))!=0){
+if(length(setdiff(unique(firm_data_select$firmid), unique(product_data$firmid)))!=0 &
+   firm_subset=="prodcom"){
   stop("Firm data does not contain only prodcom firms. Check modules a and c and come back")
 }
 
@@ -67,7 +70,6 @@ product_summary[, patent:=ifelse(num_patent<=0 | is.na(num_patent), 0, 1)]
 product_summary<-window_var_cretor(product_summary, "firmid", "year", "patent", window_length, 0, "patent_window", na_rm=T)
 product_summary[, tm:=ifelse(num_tm<=0 | is.na(num_tm), 0, 1)]
 product_summary<-window_var_cretor(product_summary, "firmid", "year", "tm", window_length, 0, "tm_window", na_rm=T)
-
 
 #' Because some p and tm is left out of the product data when merging (all.x=T), the new time window may
 #' be overlooking p and tms granted before the start of the product panel. Adjust patent_window for this.
@@ -97,22 +99,22 @@ product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_produ
 product_summary<-merge(product_summary, firm_data_select, by=c("firmid", "year"), all.x = T)
 
 # Bring in NUTS information
-nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
-nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+# nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
+# nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
 
-# Clean it and merge it to product_summary
-nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
-nuts<-nuts[firmid %in% unique(product_summary$firmid)]
-nuts<-nuts[, c("firmid", "year", "nuts3")]
-nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
-nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
-nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
-nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
-product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
+# # Clean it and merge it to product_summary
+#  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
+#  nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+#  nuts<-nuts[, c("firmid", "year", "nuts3")]
+#  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
+#  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
+#  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
+#  nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
+#  product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
 
 # Bring in IPCR information, clean it and merdge it to product_summary
 ipcr_cumulative<-readRDS("ipcr_cumulative.RDS")
-# ipcr_cumulative[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)]
+ipcr_cumulative[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)]
 product_summary<-merge(product_summary, ipcr_cumulative, by=c("firmid", "year"), all.x=T)
 product_summary[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))]
 product_summary<-window_var_cretor(product_summary, "firmid", "year", "ipcr_creat", 2, 0, "ipcr_creat_window", na_rm=F)
@@ -120,8 +122,17 @@ rev_growth<-growth_creator(product_summary, "rev", 1) %>% select(firmid, year,re
 product_summary<-merge(product_summary, rev_growth, by=c("firmid", "year"), all.x = T)
 product_summary[, ever_patent:=as.numeric(any(patent)), by=firmid]
 product_summary[, ever_tm:=as.numeric(any(tm)), by=firmid]
+# grep("ipcr", names(product_summary), value=T)
 
-saveRDS(product_summary, "product_firm_data_pre_high_growth.RDS")
+saveRDS(product_summary, paste0("product_firm_data_pre_high_growth_", firm_subset, "_firms", ".RDS"))
+print(paste0("Saved product summary for: ", firm_subset, " firms"))
+# Clean up environment
+# rm(list=setdiff(ls(), c("output_dir", "output_dir_creator", "remove_special_chars", "regression_innovation_growth",
+#                           "product_summary", "firm_data_select", "firm_subset", "cpa_or_pf", "ext", "digits", "exit_digit",
+#                           "window_length")))
+
+
+}
 
 
 # 1) Distributions of patenting and patenting intensity per age -------------------------------------------------------------------
@@ -201,9 +212,6 @@ for (i in 1:nrow(inv_data)){
   objects_to_remove<-setdiff(ls(), og_elements)
 
 }
-
-
-
 
 # 1a) IP and firm growth -------------------------------------------------
 
@@ -298,11 +306,10 @@ for(category in categories){
   
   results<-data.table()
 }
-
-
 # 2) Graphs product decisions of high-growth young  firms -------------------------------------------------------------------
 
-product_summary<-readRDS("product_firm_data_pre_high_growth.RDS")
+firm_subset<-"prodcom"
+product_summary <- readRDS(paste0("product_firm_data_pre_high_growth_", firm_subset, "_firms.RDS"))
 
 # Set high growth and young firms thresholds
 threshold_young<-5

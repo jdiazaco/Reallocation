@@ -44,22 +44,31 @@ create_formulas <- function(ys, xs, controls, fe) {
     if (grepl("growth", y)) {
       sub("growth", "bar", y)
     } else {
-      NA_character_
+      "nq_bar"
     }
   })
 
   # Add the formula column
-  combinations$formula <- apply(combinations, 1, function(row) {
-    paste0(row["y"], " ~ ", row["x"], " + ", row["control"], " | ", row["fixed_effect"])
-  })
+    combinations$formula <- apply(combinations, 1, function(row) {
+        ifelse(is.na(row["fixed_effect"]) | row["fixed_effect"] == "",
+            paste0(row["y"], " ~ ", row["x"], " + ", row["control"]),
+            paste0(
+                row["y"], " ~ ", row["x"], " + ", row["control"],
+                " | ", row["fixed_effect"]
+            )
+        )
 
+    })
+
+  
   # Add the description column
   combinations$description <- apply(combinations, 1, function(row) {
     paste0(
-      "y", "_", which(ys == row["y"]), "_",
+      row["y"], "_",
       "x", "_", which(xs == row["x"]), "_",
-      "ctrl", "_", which(controls == row["control"]), "_",
-      "fe", "_", which(fe == row["fixed_effect"])
+      "ctrl", "_", which(controls == row["control"]), 
+      ifelse(is.na(row["fixed_effect"]) | row["fixed_effect"]=="", "_nofe", "_fe_"),
+      gsub("[^A-Za-z0-9_]", "", row["fixed_effect"])
     )
   })
 

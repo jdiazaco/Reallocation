@@ -74,57 +74,66 @@ firm_data_select <- merge(firm_data_select, nace_DEFind, by.x="NACE_BR", by.y = 
 firm_data_select[, sector_NACE:=substr(DEFind,1,1)]
 firm_data_select$DEFind<-NULL
 firm_data_select[, birth_year := min(year), by = firmid]
-firm_data_select[!is.na(birth_year) & birth_year == year, empl_l:= 0]
+firm_data_select[!is.na(birth_year) & birth_year == year, empl_l := 0]
+
+### Size quantiles and age brackets
+# 1) Compute quartile/decile/percentile within (year, NACE_BR)
+firm_data_select[, `:=`(
+  rank_within_industry = frank(nq_bar, ties.method = "average", na.last = "keep"),
+  n_firms_in_industry  = .N
+), by = .(year, NACE_BR)] %>%
+  .[, `:=`(
+    size_quartile = as.integer(ifelse(n_firms_in_industry > 4, pmin(4L, ceiling(4 * rank_within_industry / n_firms_in_industry)), NA)),
+    size_decile = as.integer(ifelse(n_firms_in_industry > 10, pmin(10L, ceiling(10 * rank_within_industry / n_firms_in_industry)), NA)),
+    size_percentile = as.integer(ifelse(n_firms_in_industry > 100, pmin(100L, ceiling(100 * rank_within_industry / n_firms_in_industry)), NA)),
+    size_1000tile = as.integer(ifelse(n_firms_in_industry > 1000, pmin(1000L, ceiling(1000 * rank_within_industry / n_firms_in_industry)), NA)),
+    leader = ifelse(rank_within_industry == n_firms_in_industry, 1L, 0L)
+  )] %>%
+  # .[, c("rank_within_industry", "n_firms_in_industry") := NULL] %>%
+  # 2) Build the categorical buckets
+  #   a) young/mature x small/medium/large
+  .[, age_size_bucket :=
+    fcase(
+      young == 1 & size == "small",  "young_small",
+      young == 1 & size != "small",  "young_large",
+      young == 0 & size == "small",  "mature_small",
+      young == 0 & size == "medium", "mature_medium",
+      young == 0 & size == "large",  "mature_large",
+      default = NA_character_
+    )] %>%
+  #   b) young/mature x quartile (compact construction)
+  .[, age_size_quartile := ifelse(is.na(young) | is.na(size_quartile), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_q", size_quartile)
+  )] %>%
+  #   c) young/mature x decile (compact construction)
+  .[, age_size_decile := ifelse(is.na(young) | is.na(size_decile), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_d", size_decile)
+  )] %>%
+  #   d) young/mature x percentile (compact construction)
+  .[, age_size_percentile := ifelse(is.na(young) | is.na(size_percentile), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_p", size_percentile)
+  )] %>%
+  #   e) young/mature x 1000tile (compact construction)
+  .[, age_size_1000tile := ifelse(is.na(young) | is.na(size_1000tile), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_k", size_1000tile)
+  )] %>%
+  #   f) young/mature x top firm (compact construction)
+  .[, age_leader := ifelse(is.na(young) | is.na(leader), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(leader == 1, "leader", "follower"))
+  )]
+
+  saveRDS(firm_data_select_prodcom_firms, "sbs_br_data_all_firms.RDS")
 
 ## Filter by prodcom firms or sectors
 firm_data_select_prodcom_firms<-firm_data_select[firmid %in% prodcom_firms]
 firm_data_select_prodcom_sectors <- firm_data_select[ sector_NACE %in% prodcom_sectors]
 
 # Remove outliers
-firm_data_select_prodcom_firms<-outliers_remove(firm_data_select_prodcom_firms, 0.01)
-
-### Size quantiles and age brackets
-# 1) Compute quartile/decile/percentile within (year, NACE_BR)
-firm_data_select_prodcom_firms[, `:=`(
-  .r = frank(empl_bar, ties.method = "average", na.last = "keep"),
-  N  = .N), by = .(year, NACE_BR)] %>%
-  
-  .[, `:=`(
-    size_quartile    = as.integer(pmin(4L,  ceiling(4  * .r / N))),
-    size_decile      = as.integer(pmin(10L, ceiling(10 * .r / N))),
-    size_percentile  = as.integer(pmin(100L, ceiling(100 * .r / N)))
-  )] %>% .[, c(".r","N") := NULL] %>%
-  
-  
-  # 2) Build the categorical buckets
-  #   a) young/mature x small/medium/large
-  .[, age_size_bucket :=
-      fcase(
-        young == 1 & size == "small",  "young_small",
-        young == 1 & size != "small",  "young_large",
-        young == 0 & size == "small",  "mature_small",
-        young == 0 & size == "medium", "mature_medium",
-        young == 0 & size == "large",  "mature_large",
-        default = NA_character_
-      )
-  ] %>%
-  
-  #   b) young/mature x quartile (compact construction)
-  .[, age_size_quartile := ifelse(is.na(young) | is.na(size_quartile), NA,
-                                  paste0(fifelse(young == 1, "young", "mature"), "_q", size_quartile))
-  ] %>%
-  
-  #   c) top decile among the young vs rest
-  .[, age_size_decile :=
-      fifelse(young == 1 & size_decile == 10L, "top decile", "rest")
-  ] %>%
-  
-  #   d) top percentile among the young vs rest
-  .[, age_size_percentile :=
-      fifelse(young == 1 & size_percentile == 100L, "top percentile", "rest")
-  ]
+firm_data_select_prodcom_firms <- outliers_remove(firm_data_select_prodcom_firms, 0.01)
+firm_data_select_prodcom_firms <- outliers_remove(firm_data_select_prodcom_firms, 0.01)
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
+saveRDS(firm_data_select, "sbs_br_data_all_firms.RDS")
 saveRDS(firm_data_select_prodcom_firms, "sbs_br_data_prodcom_firms.RDS")
 saveRDS(firm_data_select_prodcom_sectors, "sbs_br_data_prodcom_sectors.RDS")
 
