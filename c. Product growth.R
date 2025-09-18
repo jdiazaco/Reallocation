@@ -122,14 +122,12 @@ firm_data_select[, `:=`(
     paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(leader == 1, "leader", "follower"))
   )]
 
-  saveRDS(firm_data_select_prodcom_firms, "sbs_br_data_all_firms.RDS")
-
 ## Filter by prodcom firms or sectors
 firm_data_select_prodcom_firms<-firm_data_select[firmid %in% prodcom_firms]
 firm_data_select_prodcom_sectors <- firm_data_select[ sector_NACE %in% prodcom_sectors]
 
 # Remove outliers
-firm_data_select_prodcom_firms <- outliers_remove(firm_data_select_prodcom_firms, 0.01)
+firm_data_select <- outliers_remove(firm_data_select, 0.01)
 firm_data_select_prodcom_firms <- outliers_remove(firm_data_select_prodcom_firms, 0.01)
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
