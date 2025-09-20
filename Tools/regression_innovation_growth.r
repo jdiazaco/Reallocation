@@ -13,6 +13,8 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
     controls <- formulas$control[i]
     fix_eff <- formulas$fixed_effect[i]
     description_temp <- formulas$description[i]
+    name <- formulas$name[i]
+    
 
       output_dir <- paste0(output_dir_og, regression_name, "/")
         if (!dir.exists(output_dir)) {
@@ -56,59 +58,51 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
           weight_flag <- as.logical(model_table$weight_flag[j])
           weight <- ifelse(weight_flag, formulas$weight[i], NA)
           additional_controls <- model_table$additional_controls[j]
-
+          
+          
           # Add additional controls if specified
           if (!is.na(additional_controls) && additional_controls != "") {
-            formula <- update(formula, paste(". ~ . +", additional_controls))
+            formula_str <- deparse(formula)
+            if(any(grepl("\\|", formula_str))){
+              formula_adj <- as.formula(
+                sub("\\|", paste0("+ ", additional_controls, " |"), formula_str)
+              )
+            }else{
+              formula_adj <- update(formula, paste(". ~ . +", additional_controls))
+            }
+          }else{
+            formula_adj <- formula
           }
 
           if (is.na(model_table$restriction[j])) {
             # "All" case
-            models[[j]] <- feols(formula, data, weights = if (!is.na(weight)) data[[weight]] else NULL)
+            models[[j]] <- feols(formula_adj, data, weights = if (!is.na(weight)) data[[weight]] else NULL)
           } else {
-            models[[j]] <- feols(formula, data[eval(parse(text = restriction))], weights = if (!is.na(weight)) data[eval(parse(text = restriction)), get(weight)] else NULL) # nolint          }
+            models[[j]] <- feols(formula_adj, data[eval(parse(text = restriction))], weights = if (!is.na(weight)) data[eval(parse(text = restriction)), get(weight)] else NULL) # nolint          }
           }
         }
         
-
-                
         # Remove underscores from coefficient names for LaTeX export for all models
         all_coef_names <- unique(unlist(lapply(models, function(m) names(m$coefficients))))
         coef_map <- setNames(gsub("_", " ", all_coef_names), all_coef_names)
-
-        # Escape underscores in fixed effect names for LaTeX
-        all_fe_names <- unique(unlist(lapply(models, function(m) {
+        
+        # Escape underscores in fixed effects names for LaTeX
+        all_fe_names <- unique(unlist(lapply(models, function(m){
           if (!is.null(m$fixef_vars)) m$fixef_vars else character(0)
         })))
         fe_map_latex <- setNames(gsub("_", "\\\\_", all_fe_names), all_fe_names)
 
         modelsummary(
           models,
-          coef_map = coef_map_latex,
           output = paste0(output_dir, description_temp, ".tex"),
           label = paste0(regression_name, "_", description_temp),
           stars = TRUE,
-          title = "", # tools::toTitleCase(paste0(gsub("_", " ", y), " on ", gsub("_", " ", gsub("\\*", "_", x)), " - Sample: ", subset, " within ", gsub("_", " ", type))),
+          title = name, # tools::toTitleCase(paste0(gsub("_", " ", y), " on ", gsub("_", " ", gsub("\\*", "_", x)), " - Sample: ", subset, " within ", gsub("_", " ", type))),
           gof_omit = "Std.Errors|R2 Within|R2 Within Adj.|AIC|BIC|Log.Lik.",
-          escape = FALSE,
           notes = NULL,
           float = "H"
         )
-        # Remove underscores from coefficient and fixed effect names for non-LaTeX output (e.g., HTML, txt)
-        # If you want to export to HTML or txt, use coef_map and fe_map instead of coef_map_latex and fe_map_latex
-        # Example:
-        # modelsummary(
-        #   models,
-        #   coef_map = coef_map,
-        #   group_map = fe_map,
-        #   output = paste0(output_dir, description_temp, ".html"),
-        #   ...
-        # )
-
-        # If you want to replace underscores with spaces in the output file name and label:
-        # output_file <- paste0(output_dir, gsub("_", " ", description_temp), ".tex")
-        # output_label <- paste0(regression_name, "_", gsub("_", " ", description_temp))
-        # modelsummary(..., output = output_file, label = output_label, ...)        
+        
         if (graphs) {
           tidy_models <- imap(models, function(model, model_name) {
             if (str_detect(x, "\\*")) {
@@ -154,9 +148,12 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
           
           for (coefficient in unique(results_df$term)) {
             results_df_temp <- results_df[term == coefficient]
+            if(nrow(results_df_temp)==1){
+              next
+            } 
             
             group_levels <- unique(results_df_temp$group)
-            color_values <- setNames(c(scales::hue_pal()(length(group_levels) - 1), "black"), group_levels)
+            color_values <- setNames(c(scales::hue_pal()(max(1,length(group_levels) - 1)), "black"), group_levels)
             
             ggplot(results_df_temp, aes(x = model_label, y = estimate, ymin = conf.low, ymax = conf.high, color = group)) +
               geom_pointrange() +
@@ -171,7 +168,10 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
             #                                 " = ",
             #                                 gsub("_", " ", gsub("_window", " W",  gsub("\\*", "? ", x))))),
             
-            ggsave(paste0(output_dir, description_temp, ".png"), height = 4, width = 7)
+            ggsave(paste0(output_dir, description_temp, 
+                          if(length(unique(results_df$term))==1) "" else paste0("_", remove_special_chars(coefficient)),
+                          ".png"), 
+                   height = 4, width = 7)
           }
         }
 
@@ -179,37 +179,40 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
 
 
         if (!is.null(disag_reg_parameters)) {
-          for (k in seq_along(nrow(disag_reg_parameters))) {
+          
+
+          for (k in 1:nrow(disag_reg_parameters)) {
             disag_y <- disag_reg_parameters$y[k]
             disag_x <- disag_reg_parameters$x[k]
-            disag_controls <- disag_reg_parameters$controls[k]
-            disag_fe <- disag_reg_parameters$fe[k]
-            disag_restriction <- disag_reg_parameters$restriction[k]
+            disag_controls <- as.character(disag_reg_parameters$controls[k])
+            disag_fe <- as.character(disag_reg_parameters$fe[k])
+            disag_restriction <- as.character(disag_reg_parameters$restriction[k])
             disag_var <- disag_reg_parameters$disag_var[k]
             disag_weight <- disag_reg_parameters$weight[k]
+            
+            disag_x_vector<-unlist(strsplit(as.character(disag_x), "\\+"))
+            disag_controls_vector<-unlist(strsplit(as.character(disag_x), "\\+"))
+            
 
             # Check if the vector version of the disag_controls exactly matches the vector version of the controls
-            if (disag_y == y &
-              unlist(strsplit(disag_x, "\\+")) %>%
-                sort() %>%
-                identical(sort(unlist(strsplit(disag_x, "\\+")))) &
-              unlist(strsplit(disag_controls, "\\+")) %>%
-                sort() %>%
-                identical(sort(unlist(strsplit(controls, "\\+")))) &
-              unlist(strsplit(disag_fe, "\\+")) %>%
-                sort() %>%
-                identical(sort(unlist(strsplit(fe, "\\+"))))) {{ model_industry <- dynamic_reg_reallocation(
-              # data restricted by disag_restriction if disag_restriction is not blank or na, data otherwise
-              data = data[eval(parse(text = ifelse(is.na(disag_restriction) | disag_restriction == "", "TRUE", disag_restriction)))],
-              y = disag_y,
-              x = c(unlist(strsplit(disag_x, "\\+")), unlist(strsplit(disag_controls, "\\+"))),
-              fix_eff = disag_fe,
-              weight_var = if (is.na(disag_weight) | disag_weight != "") disag_weight else NULL,
-              disag_var = disag_var,
-              n_lags_bw = 0,
-              n_lags_fw = 0
-            )
+            if (all(disag_y == y,
+                disag_x == x,
+                disag_controls == controls,
+                disag_fe == fix_eff)) {{ 
+                  
 
+                  model_industry <- dynamic_reg_reallocation(
+                    # data restricted by disag_restriction if disag_restriction is not blank or na, data otherwise
+                    data = data[eval(parse(text = ifelse(is.na(disag_restriction) | disag_restriction == "", "TRUE", disag_restriction)))],
+                    y = disag_y,
+                    x = c(disag_x_vector, disag_controls_vector),
+                    fix_eff = disag_fe,
+                    weight_var = if (is.na(disag_weight) | disag_weight != "") disag_weight else NULL,
+                    disag_var = disag_var,
+                    n_lags_bw = 0,
+                    n_lags_fw = 0
+                  )
+                  
 
 
             # model_industry <- merge(model_industry, br_industry_HHI[, .(median_HHI = median(HHI_industry)), by = NACE_BR],
@@ -232,9 +235,9 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
 
             fwrite(model_industry, paste0(
               output_dir, "data_for_image_",
-              remove_special_chars(disag_y), "_",
-              remove_special_chars(gsub("\\*", "_", disag_x)), "_",
+              description_temp, "_",
               remove_special_chars(gsub("\\+", "_", disag_restriction)), "_",
+              remove_special_chars(disag_var),
               ".csv"
             )) }}
             print(paste0(output_dir, "regressions_ipcr_addition_", y, "_", x, ".tex"))

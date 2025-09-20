@@ -84,3 +84,5 @@ parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
 # Set start and end years
 start<-2009
 end<-2021
+
+options(error=recover)

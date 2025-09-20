@@ -51,13 +51,13 @@ create_formulas <- function(ys, xs, controls, fe) {
   # Add the formula column
     combinations$formula <- apply(combinations, 1, function(row) {
         ifelse(is.na(row["fixed_effect"]) | row["fixed_effect"] == "",
-            paste0(row["y"], " ~ ", row["x"], " + ", row["control"]),
-            paste0(
-                row["y"], " ~ ", row["x"], " + ", row["control"],
-                " | ", row["fixed_effect"]
-            )
-        )
-
+            paste0(row["y"], " ~ ", row["x"], 
+                   ifelse(is.na(row["control"]) | row["control"]=="", "",
+                          paste0(" + ", row["control"]))),
+            paste0(row["y"], " ~ ", row["x"], 
+                   ifelse(is.na(row["control"]) | row["control"]=="", "",
+                          paste0(" + ", row["control"])),
+                   " | ", row["fixed_effect"]))
     })
 
   
@@ -68,9 +68,16 @@ create_formulas <- function(ys, xs, controls, fe) {
       "x", "_", which(xs == row["x"]), "_",
       "ctrl", "_", which(controls == row["control"]), 
       ifelse(is.na(row["fixed_effect"]) | row["fixed_effect"]=="", "_nofe", "_fe_"),
-      gsub("[^A-Za-z0-9_]", "", row["fixed_effect"])
+      gsub("[^A-Za-z0-9]", "", row["fixed_effect"])
     )
   })
+  
+  combinations$name <- apply(combinations, 1, function(row) {
+    tools::toTitleCase(paste0(gsub("[^A-Za-z0-9+*]", " ", row["y"]),
+                              " ~ ",
+                              gsub("[^A-Za-z0-9+*]", " ", row["x"])))
+  })
+  
 
   # Convert to data.table for easier manipulation
   model_table <- data.table::as.data.table(combinations)
