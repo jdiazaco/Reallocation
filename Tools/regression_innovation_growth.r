@@ -72,9 +72,19 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
         
 
                 
+        # Remove underscores from coefficient names for LaTeX export for all models
+        all_coef_names <- unique(unlist(lapply(models, function(m) names(m$coefficients))))
+        coef_map <- setNames(gsub("_", " ", all_coef_names), all_coef_names)
+
+        # Escape underscores in fixed effect names for LaTeX
+        all_fe_names <- unique(unlist(lapply(models, function(m) {
+          if (!is.null(m$fixef_vars)) m$fixef_vars else character(0)
+        })))
+        fe_map_latex <- setNames(gsub("_", "\\\\_", all_fe_names), all_fe_names)
+
         modelsummary(
           models,
-          # coef_map = cum_coef_maps,
+          coef_map = coef_map_latex,
           output = paste0(output_dir, description_temp, ".tex"),
           label = paste0(regression_name, "_", description_temp),
           stars = TRUE,
@@ -84,7 +94,21 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
           notes = NULL,
           float = "H"
         )
-        
+        # Remove underscores from coefficient and fixed effect names for non-LaTeX output (e.g., HTML, txt)
+        # If you want to export to HTML or txt, use coef_map and fe_map instead of coef_map_latex and fe_map_latex
+        # Example:
+        # modelsummary(
+        #   models,
+        #   coef_map = coef_map,
+        #   group_map = fe_map,
+        #   output = paste0(output_dir, description_temp, ".html"),
+        #   ...
+        # )
+
+        # If you want to replace underscores with spaces in the output file name and label:
+        # output_file <- paste0(output_dir, gsub("_", " ", description_temp), ".tex")
+        # output_label <- paste0(regression_name, "_", gsub("_", " ", description_temp))
+        # modelsummary(..., output = output_file, label = output_label, ...)        
         if (graphs) {
           tidy_models <- imap(models, function(model, model_name) {
             if (str_detect(x, "\\*")) {

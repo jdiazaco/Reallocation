@@ -469,8 +469,6 @@ product_data<-product_data %>% mutate(NACE=substr(prodfra_plus, 1, 4))
 # Juli?n: Exclude firms and product lines in excluded industries if the parameter is set above
 exclude_industries<-T
 parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
-
-
 # These are industries that are not continuously covered by prodcom (specifically, they were not covered in 2009)
 if(exclude_industries){
   ind_to_exclude <- c(19, 35,36,37,38,39,46) 
@@ -505,8 +503,6 @@ product_data<-product_data %>% mutate(NACE=substr(prodfra_plus, 1, 4))
 nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
 product_data$DEFind<-NULL
 product_data <- merge(product_data, nace_DEFind, by.x="NACE", by.y = "nace", all.x = T) %>% select(firmid, year, prodfra_plus, rev, everything())
-
-
 #Juli?n: add code_entry_year
 columns = c('firmid', 'prodfra_plus', 'year', "code_entry_year")
 for (i in seq_along(normal_cols)){
@@ -590,7 +586,6 @@ test<-product_data[, .(prodfra_plus=unique(prodfra_plus)), by=.(cpa)]
 # product_data<-product_data[, n_units:=n_distinct(unit), by=.(firmid, year, cpa, active)]
 product_data<-product_data[, .(rev=sum(rev, na.rm=T)), by=.(firmid, year, cpa, active)]
 
-
 # Bring in BR NACE information
 active_firm_list = readRDS('active_firm_list.rds')
 birth_death = readRDS('firm_birth_death.rds') 
@@ -604,7 +599,6 @@ product_data<-product_data %>% mutate(NACE=substr(cpa, 1, 4))
 # Juli?n: Exclude firms and product lines in excluded industries if the parameter is set above
 exclude_industries<-T
 parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
-
 
 # These are industries that are not continuously covered by prodcom (specifically, they were not covered in 2009)
 if(exclude_industries){
@@ -641,7 +635,6 @@ product_data<-product_data %>% mutate(NACE=substr(cpa, 1, 4))
 nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
 product_data$DEFind<-NULL
 product_data <- merge(product_data, nace_DEFind, by.x="NACE", by.y = "nace", all.x = T) %>% select(firmid, year, cpa, rev, everything())
-
 
 #Juli?n: add code_entry_year
 columns = c('firmid', 'cpa', 'year')
@@ -707,9 +700,6 @@ product_data = product_data %>% arrange(firmid, cpa, year) %>% select(columns, e
 # prodfra_or_pcc8<-"cpa"
 # parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
 saveRDS(product_data, paste0("product_level_growth_", filter_indicator,  "_cpa_.RDS"))
-
-
-
 
 #5) prepare firm level decompositions of product data ------------------------------------
 
