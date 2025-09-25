@@ -53,8 +53,6 @@ br_data = rbindlist(lapply(c(start:end),function(yr){
   br_data_temp[, `:=`(firmid = as.character(ENT_ID))]
   br_data_temp = br_data_temp %>% rename(lfo=LEGAL) %>% select(firmid, year,empl, NACE_BR, Start_Ent)
 }), fill = T)
-
-
 ## import SBS data 
 interest_vars = c('ENT_ID','year',"SBS_12110")
 sbs_data = rbindlist(lapply(c(start:end),function(yr){
@@ -121,8 +119,6 @@ sbs_br_combined<-deflate(sbs_br_combined, "NACE_BR", c("nq", "capital", "turnove
 
 ## export data for later use 
 saveRDS(sbs_br_combined, 'sbs_br_combined.RDS')
-
-
 
 #0cis) Import CIS -------------------------------------------------------------------------
 # import both datasets then filter BR data by whether it is in SBS,

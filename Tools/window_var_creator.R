@@ -33,7 +33,7 @@ window_var_cretor<-function(data, unit_var, time_var, target_var, window_length_
       if(na_rm){
         any(get(target_var)[year >= (y-window_length_bw) & year <= y+window_length_fw]>0, na.rm = T)
       }else{
-        any(get(target_var)[year >= (y-window_length_bw) & year <= y+window_length_fw]>0)
+        any(get(target_var)[year >= (y-window_length_bw) & year <= y+window_length_fw]>0, na.rm = F)
       }
     )
   ), by=get(unit_var)]

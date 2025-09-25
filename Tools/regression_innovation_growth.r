@@ -99,9 +99,16 @@ regression_innovation_growth<-function(regression_name, data, formulas, titles_a
           stars = TRUE,
           title = name, # tools::toTitleCase(paste0(gsub("_", " ", y), " on ", gsub("_", " ", gsub("\\*", "_", x)), " - Sample: ", subset, " within ", gsub("_", " ", type))),
           gof_omit = "Std.Errors|R2 Within|R2 Within Adj.|AIC|BIC|Log.Lik.",
-          notes = NULL,
-          float = "H"
+          notes = NULL
         )
+        
+        tex_file <- paste0(output_dir, description_temp, ".tex")
+        lines <- readLines(tex_file)
+        lines <- gsub("\\\\begin\\{table\\}", "\\\\begin{table}[H]", lines)
+        lines <- gsub("\\\\bottomrule", paste0("\n Weighted &", paste(model_table$weight_flag, collapse=" & "), "\\\\\\\\ \n \\\\bottomrule"), lines)
+
+        
+        writeLines(lines, tex_file)
         
         if (graphs) {
           tidy_models <- imap(models, function(model, model_name) {

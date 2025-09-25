@@ -66,7 +66,8 @@ total_revenue<-NULL; gc() #Delete total_revenue and clean revenue
 
 #Identify prodocm firms and sectors for filtering later
 prodcom_firms<-unique(product_data$firmid)
-prodcom_sectors<-c("B", "C") #Prodcom usually covers sectors B, C, D and E, but we decided to exclude sectors D and E. If this changes, we should change this
+n_firms_in_sector<-100
+prodcom_sectors<- product_data %>% .[, .(n=.N), by=NACE_2d] %>% .[n>=n_firms_in_sector] %>% pull(NACE_2d) %>% sort(.)
 
 #Clean firm data with appropriate years and select firms/sectors in FARE/FICUS that have been covered by PRODCOM
 firm_data_select<- firm_data_select[year>=2008, ] # If NACE has not been concorded between v1.1 and v2, we remove observations prior to 2008
@@ -124,7 +125,7 @@ firm_data_select[, `:=`(
 
 ## Filter by prodcom firms or sectors
 firm_data_select_prodcom_firms<-firm_data_select[firmid %in% prodcom_firms]
-firm_data_select_prodcom_sectors <- firm_data_select[ sector_NACE %in% prodcom_sectors]
+firm_data_select <- firm_data_select[ NACE_2d %in% prodcom_sectors]
 
 # Remove outliers
 firm_data_select <- outliers_remove(firm_data_select, 0.01)
@@ -133,7 +134,7 @@ firm_data_select_prodcom_firms <- outliers_remove(firm_data_select_prodcom_firms
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 saveRDS(firm_data_select, "sbs_br_data_all_firms.RDS")
 saveRDS(firm_data_select_prodcom_firms, "sbs_br_data_prodcom_firms.RDS")
-saveRDS(firm_data_select_prodcom_sectors, "sbs_br_data_prodcom_sectors.RDS")
+# saveRDS(firm_data_select_prodcom_sectors, "sbs_br_data_prodcom_sectors.RDS")
 
 # Select either prodcom_firms or prodcom_sectors dataset to continue
 firm_data_select<-firm_data_select_prodcom_firms
