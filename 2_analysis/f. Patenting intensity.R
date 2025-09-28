@@ -106,7 +106,7 @@ product_data <- readRDS(paste0("product_level_growth_", filter_indicator, "_.RDS
 ipcr_cumulative <- readRDS("ipcr_cumulative.RDS") %>% as.data.table(.) %>% .[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)] # From above
 br_industry_HHI <- readRDS("br_industry_HHI.RDS") # Industry data (from c.)
 patenting_products <- readRDS("product_firm_data_pre_high_growth_all_firms.RDS") %>% # Product information aggregated at the firm level (from e.)
-  .[abs(empl_growth) != 2 & abs(nq_growth) != 2 & abs(capital_growth) != 2] %>% # abs(rev_growth) != 2] %>%
+  .[abs(empl_growth) != 2 & abs(nq_growth) != 2 & abs(rev_growth) != 2] %>%
   select(
     firmid, year, NACE_BR, NACE_2d, young,
     patent, patent_window, ever_patent,
@@ -172,43 +172,26 @@ patenting_products <- read_rds("patenting_products_firm_level.RDS")
 # patenting_products_og <- patenting_products
 graphs <- T
 regression_name<-"growth_x_innovation"
-ys <- c("nq_growth", "empl_growth", "capital_growth", "within_industry_rev_share_growth") # , "rev_growth")
-# xs <- c("tm_window", "tm_window*net_product_creat_window", "patent_window", "patent_window*net_product_creat_window", "net_product_destr_window", "net_product_creat_window") # , "patent_window + ipcr_creat_window"
-xs <- c("patent_window") # , "net_product_creat_window", "tm_window" , "patent_window + ipcr_creat_window"
-controls <- c("")
-fe <- c("NACE_BR + year")
+ys <- c("nq_growth", "empl_growth", "rev_growth", "within_industry_rev_share_growth") # , "rev_growth")
+xs <- c("tm_window", "tm_window*net_product_creat_window", "patent_window", "patent_window*net_product_creat_window", "net_product_destr_window", "net_product_creat_window", "patent_window + ipcr_creat_window")
+controls <- c("log(empl_l)")
+fe <- c("", "firmid + year", "NACE_BR + year", "NACE_BR^year")
 
 formulas <- create_formulas(ys, xs, controls, fe)
 titles_and_restrictions <- fread(
   'title, restriction, weight_flag, additional_controls
-  M. Small, age_size_bucket=="mature_small", T, log(empl_l)
-  M. Medium, age_size_bucket=="mature_medium", T, log(empl_l)
-  M. Large, age_size_bucket=="mature_large", T, log(empl_l)
-  Y. Small, age_size_bucket=="young_small", T, log(empl_l)
-  Y. NonSmall, age_size_bucket=="young_large", T, log(empl_l)
-  All, NA, T, .[x]*log(firm_age)*log(empl_bar)'
+  M. Small, age_size_bucket=="mature_small", T,
+  M. Medium, age_size_bucket=="mature_medium", T,
+  M. Large, age_size_bucket=="mature_large", T,
+  Y. Small, age_size_bucket=="young_small", T,
+  Y. NonSmall, age_size_bucket=="young_large", T,
+  All, NA, log_age'
 )
+
+# types<- c("all_firms") # , "patenting_firms"
+# subsets<- c("all") # "young", "mature"
+
 regression_innovation_growth(regression_name, patenting_products, formulas, titles_and_restrictions, graphs=graphs)
-
-graphs <- T
-regression_name<-"growth_x_innovation_+_concentration"
-ys <- c("nq_growth", "empl_growth", "capital_growth") # , "within_industry_rev_share_growth" , "rev_growth")
-xs <- c("patent_window") # , , "net_product_creat_window", "tm_window", "patent_window + ipcr_creat_window"
-controls <- c("HHI_industry")
-fe <- c("NACE_BR + year")
-formulas <- create_formulas(ys, xs, controls, fe)
-titles_and_restrictions <- fread(
-  'title, restriction, weight_flag, additional_controls
-  M. Small, age_size_bucket=="mature_small", T, log(empl_l)
-  M. Medium, age_size_bucket=="mature_medium", T, log(empl_l)
-  M. Large, age_size_bucket=="mature_large", T, log(empl_l)
-  Y. Small, age_size_bucket=="young_small", T, log(empl_l)
-  Y. NonSmall, age_size_bucket=="young_large", T, log(empl_l)
-  All, NA, T, .[x]*log(firm_age) + .[x]*log(empl_bar) + .[x]*HHI_industry'
-)
-regression_innovation_growth(regression_name, patenting_products, formulas, titles_and_restrictions, graphs=graphs)
-
-
 
 # 8b) Patenting Graphs -----------------
 
@@ -360,39 +343,38 @@ for (diff_var in c("size", "young")) {
 
 # 9) Patenting trademarking analysis -----------------
 
-patenting_products <- readRDS("patenting_products_firm_level.RDS") %>% as.data.table(.) %>% 
-  .[, log_empl_bar:=asinh(empl_bar)] %>%  .[, log_firm_age:=asinh(firm_age)]
+patenting_products <- readRDS("patenting_products_firm_level.RDS")
 threshold_young <- 5
 output_dir_og <- output_dir
 patenting_products_og <- patenting_products
 graphs <- T
 regression_name<-"patent_tm_x_size_concentration"
-ys <- c("patent", "patent_window") # , "rev_growth")
-xs <- c("log_empl_bar*HHI_industry")
+ys <- c("patent", "patent_window", "empl_growth", "nq_growth", "capital_growth") # , "rev_growth")
+xs <- c("log_empl_bar*HHI_industry", "within_industry_rev_share*HHI_industry")
 controls <- c("log_firm_age")
-fe <- c("", "year", "firmid + year", "NACE_BR + year")
+fe <- c("", "firmid + year", "NACE_BR + year", "NACE_BR^year")
 
 
 formulas <- create_formulas(ys, xs, controls, fe)
 titles_and_restrictions_fixed_buckets <- fread(
   'title, restriction, weight_flag, additional_controls
+  All, NA, T,
   M. Small, age_size_bucket=="mature_small", T,
   M. Medium, age_size_bucket=="mature_medium", T,
   M. Large, age_size_bucket=="mature_large", T,
   Y. Small, age_size_bucket=="young_small", T,
-  Y. NonSmall, age_size_bucket=="young_large", T,
-  All, NA, T, log_firm_age*HHI_industry'
+  Y. NonSmall, age_size_bucket=="young_large", T,'
 )
 
-disag_reg_parameters <- expand.grid(
+disag_reg_parameters <- data.table(
   y = "patent_window",
   x = "log_empl_bar*HHI_industry",
   controls = "log_firm_age",
-  fe =  c("", "year", "firmid + year", "NACE_BR + year"),
+  fe = "firmid + year",
   weight = "nq_bar",
   restriction = "age_size_bucket=='mature_large'",
   disag_var = c("NACE_2d", "NACE_BR")
-) %>% as.data.table(.)
+)
 
 types <- c("all_firms", "patenting_firms")
 subsets<- c("all") # "young", "mature"
@@ -402,24 +384,23 @@ regression_innovation_growth(regression_name,
   types = types, subsets = subsets, graphs = graphs, disag_reg_parameters = disag_reg_parameters
 )
 
-
-
-titles_and_restrictions_quantiles <- read_csv(
+titles_and_restrictions_quantiles <- fread(
   'title, restriction, weight_flag, additional_controls
+    All, NA, T, .[x]*(leader)*(young)
   M. Q1, age_size_quartile=="mature_q1", T,
   M. Q4, age_size_quartile=="mature_q4", T,
   M. Q10, age_size_decile=="mature_d10", T,
-  M. Q100, age_size_percentile=="mature_p99" | age_size_percentile=="mature_p100", T,
-  M. Leader, age_leader=="mature_leader", T,
-  All, NA, T, log_empl_bar*HHI_industry*(leader)')
-#   M. Q1000, age_size_1000tile=="mature_k999" | age_size_1000tile=="mature_k1000", T,
-
-# patenting_products[, mature:=(1-young)]
+  M. Q100, age_size_decile=="mature_p99" | age_size_decile=="mature_p100", T,
+  M. Q1000, age_size_1000tile=="mature_k999" | age_size_1000tile=="mature_k1000", T,
+  M. Q1000, age_size_1000tile=="mature_k999" | age_size_1000tile=="mature_k1000", T,
+  M. Leader, age_leader=="mature_leader", T,'
+)
 
 regression_name<-"patent_tm_x_size_concentration_quantiles"
 
 regression_innovation_growth(regression_name,
   patenting_products, formulas, titles_and_restrictions_quantiles,
-  types = types, subsets = subsets, graphs = graphs)
+  types = types, subsets = subsets, graphs = graphs, disag_reg_parameters = disag_reg_parameters
+)
 
 

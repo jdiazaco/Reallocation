@@ -1,3 +1,9 @@
-linters: lintr::with_defaults(
-  line_length_linter = NULL
-)
+linters <- lintr::linters_with_defaults(
+  line_length_linter    = NULL, # note: vscode-R default is 120
+   cyclocomp_linter      = NULL, # same as vscode-R
+   object_name_linter    = NULL, # same as vscode-R
+   object_usage_linter   = NULL, # same as vscode-R
+   commented_code_linter = NULL,
+   assignment_linter     = NULL,
+   seq_linter           = NULL,
+   semicolon_linter      = NULL)

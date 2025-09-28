@@ -30,126 +30,108 @@ if(cpa_or_pf=="cpa"){
 
 for(firm_subset in c("prodcom", "all")){
   
-  # firm_subset <- "all"
-  
   #Bring in necessary firm and product information
-  firm_data_select<-readRDS( paste0("sbs_br_data_", firm_subset, "_firms.RDS")) %>% filter(year>2009) # Coming from code c. 
-  nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
-  product_data<-readRDS(paste0("product_level_growth_", filter_indicator, ext, "_.RDS")) # Coming from code d. 
-  
-  #' Bring in product, patent and trademark data.
-  product_summary<-readRDS(paste0("product_creation_destruction", ext, ".RDS"))
-  patent_tm_data<-readRDS("patent_tm_clean.RDS")
-  setDT(patent_tm_data)
-  
-  # Check only prodcom firms are present in the firm_data_select sample
-  if(length(setdiff(unique(firm_data_select$firmid), unique(product_data$firmid)))!=0 &
-     firm_subset=="prodcom"){
-    stop("Firm data does not contain only prodcom firms. Check modules a and c and come back")
-  }
-  
-  window_length<-2
-  
-  # Create growth measures for patent and tm variables
-  patent_tm_data<-patent_tm_data[firmid %in% unique(firm_data_select$firmid) | firmid %in% unique(product_data$firmid)]
-  patent_growth<-growth_creator(patent_tm_data, "total_patent", window_length) %>% select(firmid, year, total_patent_l, total_patent_bar, total_patent_growth)
-  tm_growth<-growth_creator(patent_tm_data, "total_tm", window_length) %>% select(firmid, year, total_tm_l, total_tm_bar, total_tm_growth)
-  patent_tm_data<-merge(patent_tm_data, patent_growth, by=c("firmid", "year"), all.x=T)
-  patent_tm_data<-merge(patent_tm_data, tm_growth, by=c("firmid", "year"), all.x=T)
-  
-  #' Create a two year time window for patenting and trademark after transforming the p and tm info into dummies.
-  patent_tm_data[, patent:=ifelse(num_patent<=0 | is.na(num_patent), 0, 1)]
-  patent_tm_data<-window_var_cretor(patent_tm_data, "firmid", "year", "patent", window_length, 0, "patent_window_temp", na_rm=T)
-  patent_tm_data[, tm:=ifelse(num_tm<=0 | is.na(num_tm), 0, 1)]
-  patent_tm_data<-window_var_cretor(patent_tm_data, "firmid", "year", "tm", window_length,0, "tm_window_temp", na_rm=T)
-  
-  #' Bring this information into the product data. Create an independent dummy and two year time window for p and tm.
-  # product_summary<-merge(product_summary, patent_tm_data, by=c("firmid", "year"), all.x = T)
-  
-  # Adjust firm age and merge firm with firmdata select
-  # firm_data<-readRDS('sbs_br_combined_cleaned.rds') #Coming from "a. Data preparation.R" part 2
-  # firm_age<-firm_data[, .(birth_year_adj = min(year)), by = .(firmid)]
-  # saveRDS(firm_age, "BR_earliest_year_firm_birth.RDS")
-  # firm_data_select<-merge(firm_data_select, firm_age, by="firmid", all.x = T)
-  # firm_data_select<-firm_data_select[, birth_year_adj:=ifelse(birth_year_adj==)]
-  # firm_data_select<-firm_data_select[, firm_age:=(year-birth_year_adj)]
-  
-  # if(firm_subset=="all"){
-  #   product_summary<-merge(firm_data_select, product_summary, by=c("firmid", "year"), all.x = T)
-  # }else{
-  #   if(firm_subset=="prodcom"){
-  #     product_summary<-merge(product_summary, firm_data_select, by=c("firmid", "year"), all.x = T)
-  #   }else{
-  #     stop("Check firm_subset specification")
-  #   }
-  # }
-  
-  product_summary<-merge(firm_data_select, product_summary, by=c("firmid", "year"), all.x = T)
-  rm(firm_data_select); gc()
-  product_summary<-merge(product_summary, patent_tm_data, by=c("firmid", "year"), all.x = T)
-  
-  
-  setDT(product_summary)
-  product_summary[, total_patent_growth:=ifelse(is.na(total_patent_growth), 0, total_patent_growth)]
-  product_summary[, total_tm_growth:=ifelse(is.na(total_tm_growth), 0, total_tm_growth)]
-  product_summary[, patent:=ifelse(num_patent<=0 | is.na(num_patent), 0, 1)]
-  product_summary<-window_var_cretor(product_summary, "firmid", "year", "patent", window_length, 0, "patent_window", na_rm=T) # Changed na_rm=T to na_rm=F after changing the dataset we're dealing with from product_summary to patent_tm_data
-  product_summary[, tm:=ifelse(num_tm<=0 | is.na(num_tm), 0, 1)]
-  product_summary<-window_var_cretor(product_summary, "firmid", "year", "tm", window_length, 0, "tm_window", na_rm=T)
-  
-  #' Because some p and tm is left out of the product data when merging (all.x=T), the new time window may
-  #' be overlooking p and tms granted before the start of the product panel. Adjust patent_window for this.
-  table(product_summary$patent_window, useNA = "always") # This should be only 1 or 0, no NAs
-  table(product_summary$tm_window, useNA = "always") # This should be only 1 or 0, no NAs
-  product_summary[, patent_window:=ifelse(patent_window==0 & patent_window_temp==1 & !is.na(patent_window_temp), 1, patent_window)]
-  product_summary[, tm_window:=ifelse(tm_window==0 & tm_window_temp==1 & !is.na(tm_window_temp), 1, tm_window)]
-  product_summary[, log_n_products:=log(number_of_products)]
-  
-  # Adjust product creation and destruction measures as net variables (new-old)
-  product_summary[, `:=`(net_product_change=new_products-destroyed_products)]
-  product_summary[, `:=`(net_product_creat=ifelse(net_product_change>0, 1, 0),
-                         net_product_destr=ifelse(net_product_change<0, 1, 0))]
-  
-  #' Create windows for product creation and destruction variables
-  #' emember that our product data is left censored, so time windows that go to years before our first data point should be NAs (na_rm=F, )
-  product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_creat", window_length, 0, "net_product_creat_window", na_rm=F) 
-  product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_destr", window_length, 0, "net_product_destr_window", na_rm=F)
-  
-  
-  # Bring in NUTS information
-  nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
-  nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
-  
-  # Clean it and merge it to product_summary
-  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
-  nuts<-nuts[firmid %in% unique(product_summary$firmid)]
-  nuts<-nuts[, c("firmid", "year", "nuts3")]
-  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
-  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
-  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
-  nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
-  product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
-  
-  # Bring in IPCR information, clean it and merdge it to product_summary
-  ipcr_cumulative<-readRDS("ipcr_cumulative.RDS")
-  # ipcr_cumulative[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)]
-  product_summary<-merge(product_summary, ipcr_cumulative, by=c("firmid", "year"), all.x=T)
-  product_summary[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))]
-  product_summary<-window_var_cretor(product_summary, "firmid", "year", "ipcr_creat", 2, 0, "ipcr_creat_window", na_rm=F)
-  rev_growth<-growth_creator(product_summary, "rev", 1) %>% select(firmid, year,rev_l, rev_bar, rev_growth)
-  product_summary<-merge(product_summary, rev_growth, by=c("firmid", "year"), all.x = T)
-  product_summary[, ever_patent:=as.numeric(any(patent)), by=firmid]
-  product_summary[, ever_tm:=as.numeric(any(tm)), by=firmid]
-  # grep("ipcr", names(product_summary), value=T)
-  
-  saveRDS(product_summary, paste0("product_firm_data_pre_high_growth_", firm_subset, "_firms", ".RDS"))
-  print(paste0("Saved product summary for: ", firm_subset, " firms"))
-  # Clean up environment
-  # rm(list=setdiff(ls(), c("output_dir", "output_dir_creator", "remove_special_chars", "regression_innovation_growth",
-  #                           "product_summary", "firm_data_select", "firm_subset", "cpa_or_pf", "ext", "digits", "exit_digit",
-  #                           "window_length")))
-  
-  
+firm_data_select<-readRDS( paste0("sbs_br_data_", firm_subset, "_firms.RDS")) %>% filter(year>2009) # Coming from code c. 
+nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
+product_data<-readRDS(paste0("product_level_growth_", filter_indicator, ext, "_.RDS")) # Coming from code d. 
+
+#' Bring in product, patent and trademark data.
+product_summary<-readRDS(paste0("product_creation_destruction", ext, ".RDS"))
+patent_tm_data<-readRDS("patent_tm_clean.RDS")
+setDT(patent_tm_data)
+
+# Check only prodcom firms are present in the firm_data_select sample
+if(length(setdiff(unique(firm_data_select$firmid), unique(product_data$firmid)))!=0 &
+   firm_subset=="prodcom"){
+  stop("Firm data does not contain only prodcom firms. Check modules a and c and come back")
+}
+
+window_length<-2
+
+# Create growth measures for patent and tm variables
+patent_tm_data<-patent_tm_data[firmid %in% unique(firm_data_select$firmid) | firmid %in% unique(product_data$firmid)]
+patent_growth<-growth_creator(patent_tm_data, "total_patent", window_length) %>% select(firmid, year, total_patent_l, total_patent_bar, total_patent_growth)
+tm_growth<-growth_creator(patent_tm_data, "total_tm", window_length) %>% select(firmid, year, total_tm_l, total_tm_bar, total_tm_growth)
+patent_tm_data<-merge(patent_tm_data, patent_growth, by=c("firmid", "year"), all.x=T)
+patent_tm_data<-merge(patent_tm_data, tm_growth, by=c("firmid", "year"), all.x=T)
+
+#' Create a two year time window for patenting and trademark after transforming the p and tm info into dummies.
+patent_tm_data[, patent:=ifelse(num_patent<=0 | is.na(num_patent), 0, 1)]
+patent_tm_data<-window_var_cretor(patent_tm_data, "firmid", "year", "patent", window_length, 0, "patent_window_temp", na_rm=T)
+patent_tm_data[, tm:=ifelse(num_tm<=0 | is.na(num_tm), 0, 1)]
+patent_tm_data<-window_var_cretor(patent_tm_data, "firmid", "year", "tm", window_length,0, "tm_window_temp", na_rm=T)
+
+#' Bring this information into the product data. Create an independent dummy and two year time window for p and tm.
+product_summary<-merge(product_summary, patent_tm_data, by=c("firmid", "year"), all.x = T)
+setDT(product_summary)
+product_summary[, total_patent_growth:=ifelse(is.na(total_patent_growth), 0, total_patent_growth)]
+product_summary[, total_tm_growth:=ifelse(is.na(total_tm_growth), 0, total_tm_growth)]
+product_summary[, patent:=ifelse(num_patent<=0 | is.na(num_patent), 0, 1)]
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "patent", window_length, 0, "patent_window", na_rm=T)
+product_summary[, tm:=ifelse(num_tm<=0 | is.na(num_tm), 0, 1)]
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "tm", window_length, 0, "tm_window", na_rm=T)
+
+#' Because some p and tm is left out of the product data when merging (all.x=T), the new time window may
+#' be overlooking p and tms granted before the start of the product panel. Adjust patent_window for this.
+table(product_summary$patent_window, useNA = "always") # This should be only 1 or 0, no NAs
+table(product_summary$tm_window, useNA = "always") # This should be only 1 or 0, no NAs
+product_summary[, patent_window:=ifelse(patent_window==0 & patent_window_temp==1 & !is.na(patent_window_temp), 1, patent_window)]
+product_summary[, tm_window:=ifelse(tm_window==0 & tm_window_temp==1 & !is.na(tm_window_temp), 1, tm_window)]
+product_summary[, log_n_products:=log(number_of_products)]
+
+# Adjust product creation and destruction measures as net variables (new-old)
+product_summary[, `:=`(net_product_change=new_products-destroyed_products)]
+product_summary[, `:=`(net_product_creat=ifelse(net_product_change>0, 1, 0),
+                       net_product_destr=ifelse(net_product_change<0, 1, 0))]
+
+#' Create windows for product creation and destruction variables
+#' emember that our product data is left censored, so time windows that go to years before our first data point should be NAs (na_rm=F, )
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_creat", window_length, 0, "net_product_creat_window", na_rm=F) 
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_destr", window_length, 0, "net_product_destr_window", na_rm=F)
+
+# Adjust firm age and merge firm with firmdata select
+# firm_data<-readRDS('sbs_br_combined_cleaned.rds') #Coming from "a. Data preparation.R" part 2
+# firm_age<-firm_data[, .(birth_year_adj = min(year)), by = .(firmid)]
+# saveRDS(firm_age, "BR_earliest_year_firm_birth.RDS")
+# firm_data_select<-merge(firm_data_select, firm_age, by="firmid", all.x = T)
+# firm_data_select<-firm_data_select[, birth_year_adj:=ifelse(birth_year_adj==)]
+# firm_data_select<-firm_data_select[, firm_age:=(year-birth_year_adj)]
+product_summary<-merge(product_summary, firm_data_select, by=c("firmid", "year"), all.x = T)
+
+# Bring in NUTS information
+# nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
+# nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+
+# # Clean it and merge it to product_summary
+#  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
+#  nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+#  nuts<-nuts[, c("firmid", "year", "nuts3")]
+#  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
+#  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
+#  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
+#  nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
+#  product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
+
+# Bring in IPCR information, clean it and merdge it to product_summary
+ipcr_cumulative<-readRDS("ipcr_cumulative.RDS")
+ipcr_cumulative[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)]
+product_summary<-merge(product_summary, ipcr_cumulative, by=c("firmid", "year"), all.x=T)
+product_summary[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))]
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "ipcr_creat", 2, 0, "ipcr_creat_window", na_rm=F)
+rev_growth<-growth_creator(product_summary, "rev", 1) %>% select(firmid, year,rev_l, rev_bar, rev_growth)
+product_summary<-merge(product_summary, rev_growth, by=c("firmid", "year"), all.x = T)
+product_summary[, ever_patent:=as.numeric(any(patent)), by=firmid]
+product_summary[, ever_tm:=as.numeric(any(tm)), by=firmid]
+# grep("ipcr", names(product_summary), value=T)
+
+saveRDS(product_summary, paste0("product_firm_data_pre_high_growth_", firm_subset, "_firms", ".RDS"))
+print(paste0("Saved product summary for: ", firm_subset, " firms"))
+# Clean up environment
+# rm(list=setdiff(ls(), c("output_dir", "output_dir_creator", "remove_special_chars", "regression_innovation_growth",
+#                           "product_summary", "firm_data_select", "firm_subset", "cpa_or_pf", "ext", "digits", "exit_digit",
+#                           "window_length")))
+
+
 }
 
 

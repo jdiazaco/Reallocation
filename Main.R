@@ -14,7 +14,7 @@ packages = c('data.table', 'haven', 'readxl', 'openxlsx','stringr', 'readr', 'dp
              'ggplot2', 'tidyverse', 'rstudioapi', 'zoo', 'reshape2',
              'patchwork', 'latex2exp', "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom", "fixest",
              "xtable", "arrow", "tools", "marginaleffects",
-             "AER", "fixest", "lfe")
+             "AER", "fixest", "lfe", "lintr")
 installed_packages <- packages %in% rownames(installed.packages())
 if (any(installed_packages == FALSE)) {
   install.packages(packages[!installed_packages])
@@ -36,7 +36,7 @@ if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
 
 
 #Bring tools
-tools_dir <- paste0(main_dir, '1 Code/Tools/')
+tools_dir <- paste0(main_dir, '1 Code - NEW VERSION/Tools/')
 source(paste0(tools_dir, "description.R"))
 source(paste0(tools_dir, "deflate.R"))
 source(paste0(tools_dir, "summary stats helper.R"))
@@ -68,7 +68,7 @@ source(paste0(tools_dir, "remove_special_chars.R"))
 # set up directories 
 raw_dir = "C:/Users/Public/1. Microprod/0. Raw data processing/Data/"
 setwd(paste0(main_dir, '2 Data/'))
-code_dir<-paste0(main_dir, "1 Code/")
+code_dir<-paste0(main_dir, "1 Code - NEW VERSION/")
 output_dir<-paste0(main_dir, "3 Output/")
 
 # Create output_dir
@@ -85,4 +85,28 @@ parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
 start<-2009
 end<-2021
 
-options(error=recover)
+source(paste0(code_dir, ".lintr.R"))
+lint(paste0(code_dir, ".lintr.R"))
+
+# Define level of aggregation for product level data
+cpa_or_pf<-"cpa" #Options: cpa, prodfra_plus
+if (cpa_or_pf == "cpa") {
+  ext <- "_cpa"
+  digits <- c(0, 1, 2, 4, 6)
+  exit_digit <- "exit_6"
+} else {
+  if (cpa_or_pf == "prodfra_plus") {
+    ext <- ""
+  }
+  digits <- c(0, 1, 2, 4, 6, 8, 10)
+  exit_digit <- "exit_10"
+}
+
+# These are oil manufacturing, public utilities, water supply, sewerage, waste management and remediation activities,
+# and activities of households as employers; undifferentiated goods- and services-producing activities of households for own use; activities of extraterritorial organizations and bodies
+  ind_to_exclude <- c(19,35,36,37,38,39,46) 
+
+
+
+output_dir <- paste0(output_dir, "2025/Export 22.05/")
+output_dir_creator(output_dir)
