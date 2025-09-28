@@ -29,9 +29,13 @@ final<-T
 if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
   code_dir<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
 }else{
-  code_dir<-"~/Reallocation/"
+  if(grepl("/Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))){
+    code_dir<-"/Users/lse/Documents/Reallocation/"
+  }else{
+    code_dir<-"~/Reallocation/"
+  }
 }
-  
+
  
 
 
@@ -70,6 +74,8 @@ raw_dir = "C:/Users/Public/1. Microprod/0. Raw data processing/Data/"
 
 if (grepl("~/Reallocation", code_dir)) {
   data_and_output_dir <- "G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
+} else {
+  data_and_output_dir <- "~/Library/CloudStorage/GoogleDrive-juadiazaco@gmail.com/Mi unidad/IWH/PhD/Reallocation/GitHub Infrastructure/"
 }
 
 setwd(paste0(data_and_output_dir, "2 Data/"))
@@ -77,7 +83,7 @@ output_dir<-paste0(data_and_output_dir, "3 Output/")
 
 # Create output_dir
 output_dir_creator(output_dir)
-output_dir_creator(paste0(code_dir, "2 Data/firm_lists/"))
+output_dir_creator(paste0(data_and_output_dir, "2 Data/firm_lists/"))
 
 # Set parameters for prodfra-pcc8 and excluded industries
 exclude_industries<-TRUE
@@ -90,3 +96,4 @@ start<-2009
 end<-2021
 
 options(error=recover)
+

@@ -456,21 +456,43 @@ for (var in lagged_vars) {
 
 # regress current follower measures of growth and patenting on previous year leader patenting,
 # previous year leader variable of interest, industry and year fixed effects, and control for number of firms in the industry
+ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_patent", "share_follower_patent")
+xs = c("leader_patent_l")
+controls = c("n_firms_l")
+fe = c("NACE_BR + year")
 
-  ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_patent", "share_follower_patent")
-  xs = c("leader_patent_l")
-  controls = c("n_firms_l")
-  fe = c("NACE_BR + year")
-
-
+# Create formulas
 formulas <- create_formulas(
-  ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_patent", "share_follower_patent"),
-  xs = c("leader_patent_l"),
-  controls = c("n_firms_l"),
-  fe = c("NACE_BR + year")
+  ys = ys,
+  xs = xs,
+  controls = controls,
+  fe = fe
 )
 
+formulas[, formula := mapply(
+  function(formula, control, y) {
+    # Replace only the control variable (as a whole word) with control + leader_lagged_y
+    leader_lagged <- paste0(gsub("follower", "leader", y), "_l")
+    # Use regex to match the control as a whole word
+    gsub(paste0("\\b", control, "\\b"), paste0(control, " + ", leader_lagged), formula)
+  },
+  formula, control, y,
+  SIMPLIFY = TRUE, USE.NAMES = FALSE
+)]
 
+formulas <- formulas %>% mutate(formula = gsub(control, paste0(control, " + ", paste0(gsub("follower", "leader", y), "_l")), formula))
+
+models <- list()
+for(i in 1:nrow(formulas)) {
+  formula <- formulas$formula[i] 
+  weight <- formulas$weight[i]
+
+  model <- feols(as.formula(formula), data = industry_year_data, weights = ~ get(weight), cluster = ~ NACE_BR)
+  models[[formulas$y[i]]] <- model
+
+}
+
+model_summary(models, output_dir, "leader_follower_patent_growth", "Leader-Follower Growth and Patenting", TRUE)
 
 # This merits revision, because by lagging I introduce NAs that I can avoid if I use the original data
 
