@@ -161,8 +161,6 @@ rm(rev_share_growth, br_industry_HHI, ipcr_cumulative); gc()
 
 # Save final data
 write_rds(patenting_products, "patenting_products_firm_level.RDS")
-
-
 # 8a) Growth, patenting and trademarking -----------------
 
 patenting_products <- read_rds("patenting_products_firm_level.RDS")
@@ -207,9 +205,6 @@ titles_and_restrictions <- fread(
   All, NA, T, .[x]*log(firm_age) + .[x]*log(empl_bar) + .[x]*HHI_industry'
 )
 regression_innovation_growth(regression_name, patenting_products, formulas, titles_and_restrictions, graphs=graphs)
-
-
-
 # 8b) Patenting Graphs -----------------
 
 setDT(patenting_products)
@@ -371,8 +366,6 @@ ys <- c("patent", "patent_window") # , "rev_growth")
 xs <- c("log_empl_bar*HHI_industry")
 controls <- c("log_firm_age")
 fe <- c("", "year", "firmid + year", "NACE_BR + year")
-
-
 formulas <- create_formulas(ys, xs, controls, fe)
 titles_and_restrictions_fixed_buckets <- fread(
   'title, restriction, weight_flag, additional_controls
@@ -402,8 +395,6 @@ regression_innovation_growth(regression_name,
   types = types, subsets = subsets, graphs = graphs, disag_reg_parameters = disag_reg_parameters
 )
 
-
-
 titles_and_restrictions_quantiles <- read_csv(
   'title, restriction, weight_flag, additional_controls
   M. Q1, age_size_quartile=="mature_q1", T,
@@ -421,5 +412,10 @@ regression_name<-"patent_tm_x_size_concentration_quantiles"
 regression_innovation_growth(regression_name,
   patenting_products, formulas, titles_and_restrictions_quantiles,
   types = types, subsets = subsets, graphs = graphs)
+# 10) Leader v. followers -----------------
+
+patenting_products <- readRDS("patenting_products_firm_level.RDS") %>% as.data.table(.) %>% 
+  .[, log_empl_bar:=asinh(empl_bar)] %>%  .[, log_firm_age:=asinh(firm_age)]
+
 
 

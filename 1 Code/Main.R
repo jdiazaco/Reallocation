@@ -29,7 +29,7 @@ final<-T
 if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
   main_dir<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
 }else{
-  main_dir<-"~/Reallocation/6 Publish/"
+  main_dir<-"~/Reallocation/"
 }
   
  
