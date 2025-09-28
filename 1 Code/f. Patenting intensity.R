@@ -417,5 +417,65 @@ regression_innovation_growth(regression_name,
 patenting_products <- readRDS("patenting_products_firm_level.RDS") %>% as.data.table(.) %>% 
   .[, log_empl_bar:=asinh(empl_bar)] %>%  .[, log_firm_age:=asinh(firm_age)]
 
+# Create measures of leader and follower patenting and growth activity
+# Here I want to create a dataset that per year and industry has the following variables:
+# leader_patent: whether the leader patented that year
+# follower_patent: whether any of the followers patented that year
+# share_follower_patent: share of followers that patented that year
+# n_firms: number of firms in the industry that year
+# leader_growth: growth (employment, revenue and capital) of the leader that year
+# follower_growth: average growth of the followers that year
+# n_followers: number of followers in the industry that year
+# lagged versions of the above variables
+
+industry_year_data <- patenting_products[, .(
+  leader_patent = max(patent, na.rm = T),
+  follower_patent = ifelse(.N > 1, max(patent[leader == 0], na.rm = T), 0),
+  share_follower_patent = ifelse(.N > 1, mean(patent[leader == 0], na.rm = T), 0),
+  n_firms = .N,
+  leader_empl_growth = ifelse(any(leader == 1), empl_growth[leader == 1][1], NA_real_),
+  follower_empl_growth = ifelse(.N > 1, mean(empl_growth[leader == 0], na.rm = T), NA_real_),
+  leader_nq_growth = ifelse(any(leader == 1), nq_growth[leader == 1][1], NA_real_),
+  follower_nq_growth = ifelse(.N > 1, mean(nq_growth[leader == 0], na.rm = T), NA_real_),
+  leader_capital_growth = ifelse(any(leader == 1), capital_growth[leader == 1][1], NA_real_),
+  follower_capital_growth = ifelse(.N > 1, mean(capital_growth[leader == 0], na.rm = T), NA_real_),
+  n_followers = sum(leader == 0)
+), by = .(NACE_BR, year)]
+
+# Create lagged variables
+lagged_vars <- c(
+  "leader_patent", "follower_patent", "share_follower_patent", "n_firms",
+  "leader_empl_growth", "follower_empl_growth",
+  "leader_nq_growth", "follower_nq_growth",
+  "leader_capital_growth", "follower_capital_growth",
+  "n_followers"
+)
+for (var in lagged_vars) {
+  industry_year_data[, paste0(var, "_l") := shift(.SD[[var]], 1, type = "lag"), by = NACE_BR, .SDcols = var]
+}
+
+# regress current follower measures of growth and patenting on previous year leader patenting,
+# previous year leader variable of interest, industry and year fixed effects, and control for number of firms in the industry
+
+  ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_patent", "share_follower_patent")
+  xs = c("leader_patent_l")
+  controls = c("n_firms_l")
+  fe = c("NACE_BR + year")
+
+
+formulas <- create_formulas(
+  ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_patent", "share_follower_patent"),
+  xs = c("leader_patent_l"),
+  controls = c("n_firms_l"),
+  fe = c("NACE_BR + year")
+)
+
+
+
+# This merits revision, because by lagging I introduce NAs that I can avoid if I use the original data
+
+
+
+
 
 
