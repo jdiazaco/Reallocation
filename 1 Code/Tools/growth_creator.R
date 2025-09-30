@@ -16,9 +16,14 @@ growth_creator<-function(data, normal_cols, n_lag, by_vars=c('firmid','year'), c
   data = merge(data, data_l, by = by_vars, all = T)
 
   if(create_born_died){
+
+    data[, `:=`(first_year = min(year, na.rm = T),
+                last_year = max(year, na.rm = T)),
+         by = .(by_vars[1])]
+
     data[, `:=`(
-      born = !is.na(birth_year) & birth_year == year,
-      died = !is.na(death_year) & death_year < year
+      born = !is.na(first_year) & first_year == year,
+      died = !is.na(last_year) & last_year < year
     )]
   }
   

@@ -26,17 +26,29 @@ invisible(lapply(packages, library, character.only = TRUE))
 set.seed(123)
 final<-T
 
-if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
-  main_dir<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
-}else{
-  main_dir<-"~/Reallocation/6 Publish/"
+if (grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  main_dir <- "G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
+} else {
+  if (grepl("/Users/lse", getwd())) {
+    main_dir <- "/Users/lse/Library/CloudStorage/GoogleDrive-juadiazaco@gmail.com/Mi unidad/IWH/PhD/Reallocation/GitHub Infrastructure/"
+  } else {
+    main_dir <- "~/Reallocation/7 New infrastructure/"
+  }
 }
-  
- 
+
+  code_dir <<- case_when(
+    ## When running locally
+    grepl("/Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))  ~ "/Users/lse/Documents/Reallocation/1 Code/",
+
+    grepl("nb", dirname(rstudioapi::getActiveDocumentContext()$path))  ~ "C:/Users/nb/Documents/Reallocation/1 Code/",
+    
+    ## When in CASD
+    T ~ "~/Reallocation/7 New infrastructure/1 Code/"
+  )
 
 
 #Bring tools
-tools_dir <- paste0(main_dir, '1 Code - NEW VERSION/Tools/')
+tools_dir <- paste0(code_dir, '/Tools/')
 source(paste0(tools_dir, "description.R"))
 source(paste0(tools_dir, "deflate.R"))
 source(paste0(tools_dir, "summary stats helper.R"))
@@ -68,7 +80,6 @@ source(paste0(tools_dir, "remove_special_chars.R"))
 # set up directories 
 raw_dir = "C:/Users/Public/1. Microprod/0. Raw data processing/Data/"
 setwd(paste0(main_dir, '2 Data/'))
-code_dir<-paste0(main_dir, "1 Code - NEW VERSION/")
 output_dir<-paste0(main_dir, "3 Output/")
 
 # Create output_dir
