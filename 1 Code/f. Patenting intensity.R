@@ -429,7 +429,9 @@ patenting_products <- readRDS("patenting_products_firm_level.RDS") %>% as.data.t
 # lagged versions of the above variables
 
 industry_year_data <- patenting_products[, .(
-  leader_patent = max(patent, na.rm = T),
+  leader_log_new_products = asinh(new_products[leader==1]),
+  follower_log_new_products = asinh(mean(new_products[leader==0], na.rm=T)),
+  leader_patent = max(patent[leader == 1], na.rm = T),
   follower_patent = ifelse(.N > 1, max(patent[leader == 0], na.rm = T), 0),
   share_follower_patent = ifelse(.N > 1, mean(patent[leader == 0], na.rm = T), 0),
   n_firms = .N,
@@ -439,11 +441,15 @@ industry_year_data <- patenting_products[, .(
   follower_nq_growth = ifelse(.N > 1, mean(nq_growth[leader == 0], na.rm = T), NA_real_),
   leader_capital_growth = ifelse(any(leader == 1), capital_growth[leader == 1][1], NA_real_),
   follower_capital_growth = ifelse(.N > 1, mean(capital_growth[leader == 0], na.rm = T), NA_real_),
-  n_followers = sum(leader == 0)
+  n_followers = sum(leader == 0),
+  empl_bar=sum(empl_bar, na.rm=T),
+  nq_bar=sum(nq_bar, na.rm=T),
+  capital_bar=sum(capital_bar, na.rm = T)
 ), by = .(NACE_BR, year)]
 
 # Create lagged variables
 lagged_vars <- c(
+  "leader_log_new_products", "follower_log_new_products",
   "leader_patent", "follower_patent", "share_follower_patent", "n_firms",
   "leader_empl_growth", "follower_empl_growth",
   "leader_nq_growth", "follower_nq_growth",
@@ -456,7 +462,7 @@ for (var in lagged_vars) {
 
 # regress current follower measures of growth and patenting on previous year leader patenting,
 # previous year leader variable of interest, industry and year fixed effects, and control for number of firms in the industry
-ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_patent", "share_follower_patent")
+ys = c("follower_empl_growth", "follower_nq_growth", "follower_capital_growth", "follower_log_new_products", "share_follower_patent")
 xs = c("leader_patent_l")
 controls = c("n_firms_l")
 fe = c("NACE_BR + year")
@@ -479,20 +485,19 @@ formulas[, formula := mapply(
   formula, control, y,
   SIMPLIFY = TRUE, USE.NAMES = FALSE
 )]
-
-formulas <- formulas %>% mutate(formula = gsub(control, paste0(control, " + ", paste0(gsub("follower", "leader", y), "_l")), formula))
+formulas[, formula:=gsub("\\+ share_leader_patent_l", "", formula)]
 
 models <- list()
 for(i in 1:nrow(formulas)) {
   formula <- formulas$formula[i] 
-  weight <- formulas$weight[i]
+  weight_temp <- formulas$weight[i]
 
-  model <- feols(as.formula(formula), data = industry_year_data, weights = ~ get(weight), cluster = ~ NACE_BR)
+  model <- feols(as.formula(formula), data = industry_year_data, weights = industry_year_data[[weight_temp]], cluster = ~ NACE_BR)
   models[[formulas$y[i]]] <- model
 
 }
 
-model_summary(models, output_dir, "leader_follower_patent_growth", "Leader-Follower Growth and Patenting", TRUE)
+modelsummary(models, paste0(output_dir, "leader_follower_patent_growth.tex"), stars=TRUE)
 
 # This merits revision, because by lagging I introduce NAs that I can avoid if I use the original data
 

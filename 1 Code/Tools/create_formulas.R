@@ -41,10 +41,14 @@ create_formulas <- function(ys, xs, controls, fe) {
 
   # Add the weight column
   combinations$weight <- sapply(combinations$y, function(y) {
-    if (grepl("^[^_]+_([^_]+)_growth$", y)) {
-      sub("^[^_]+_([^_]+)_growth$", "\\1_bar", y)
+    if (grepl("^[^_]+_([^_]+)_growth", y)) {
+      sub("^[^_]+_([^_]+)_growth", "\\1_bar", y)
     } else {
-      "nq_bar"
+      if(grepl("growth", y)){
+        sub("growth", "bar", y)
+      }else{
+        "nq_bar"
+      }
     }
   })
 
