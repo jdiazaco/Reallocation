@@ -1,0 +1,13 @@
+	(1)	(2)	(3)	(4)
+VARIABLES	profit_w	laborshare_w	costshare_w	ms5d_w
+				
+l_mu_tl_m_tr_BFSR_s	0.111***	-0.0271***	-0.0766***	0.0307***
+	(0.000965)	(0.000625)	(0.000601)	(0.00390)
+Constant	-0.0748***	0.314***	0.453***	0.531***
+	(0.000925)	(0.000667)	(0.000584)	(0.00445)
+				
+Observations	147,403	147,403	147,403	147,403
+R-squared	0.502	0.075	0.501	0.007
+Number of firmsId	24,646	24,646	24,646	24,646
+Robust standard errors in parentheses				
+*** p<0.01, ** p<0.05, * p<0.1				
