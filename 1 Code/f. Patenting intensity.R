@@ -7,7 +7,7 @@
 # 0) Setup ----------------------------------------------------------------------
 source(paste0(dirname(rstudioapi::getActiveDocumentContext()$path), "/Main.R"))
 folder_name <- ""
-output_dir <- paste0(output_dir, "2025/Export 16.09/")
+output_dir <- paste0(output_dir, "2025/Export 02.10/")
 output_dir_creator(output_dir)
 
 # 1) Load and clean patent data ------------------------------------------------
@@ -401,6 +401,8 @@ titles_and_restrictions_quantiles <- read_csv(
   M. Q4, age_size_quartile=="mature_q4", T,
   M. Q10, age_size_decile=="mature_d10", T,
   M. Q100, age_size_percentile=="mature_p99" | age_size_percentile=="mature_p100", T,
+  M. Top 4, age_top_4_leaders=="mature_top_4", T,
+  M. Top 10, age_top_10_leaders=="mature_top_10", T,
   M. Leader, age_leader=="mature_leader", T,
   All, NA, T, log_empl_bar*HHI_industry*(leader)')
 #   M. Q1000, age_size_1000tile=="mature_k999" | age_size_1000tile=="mature_k1000", T,

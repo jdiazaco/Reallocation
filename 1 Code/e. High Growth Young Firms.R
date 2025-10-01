@@ -116,23 +116,23 @@ for(firm_subset in c("prodcom", "all")){
   product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_destr", window_length, 0, "net_product_destr_window", na_rm=F)
   
   
-  # Bring in NUTS information
-  nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
-  nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+  # # Bring in NUTS information
+  # nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
+  # nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
   
-  # Clean it and merge it to product_summary
-  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
-  nuts<-nuts[firmid %in% unique(product_summary$firmid)]
-  nuts<-nuts[, c("firmid", "year", "nuts3")]
-  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
-  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
-  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
-  nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
-  product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
+  # # Clean it and merge it to product_summary
+  # nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
+  # nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+  # nuts<-nuts[, c("firmid", "year", "nuts3")]
+  # nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
+  # nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
+  # nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
+  # nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
+  # product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
   
   # Bring in IPCR information, clean it and merdge it to product_summary
   ipcr_cumulative<-readRDS("ipcr_cumulative.RDS")
-  # ipcr_cumulative[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)]
+  ipcr_cumulative[, firmid:=as.integer(.GRP), by=firmid] %>% .[, firmid:=as.numeric(firmid)]
   product_summary<-merge(product_summary, ipcr_cumulative, by=c("firmid", "year"), all.x=T)
   product_summary[, `:=`(ipcr_creat=fifelse(is.na(ipcr_creat), 0, ipcr_creat))]
   product_summary<-window_var_cretor(product_summary, "firmid", "year", "ipcr_creat", 2, 0, "ipcr_creat_window", na_rm=F)

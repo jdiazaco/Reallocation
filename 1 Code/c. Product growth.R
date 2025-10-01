@@ -77,6 +77,7 @@ firm_data_select$DEFind<-NULL
 firm_data_select[, birth_year := min(year), by = firmid]
 firm_data_select[!is.na(birth_year) & birth_year == year, empl_l := 0]
 
+
 ### Size quantiles and age brackets
 # 1) Compute quartile/decile/percentile within (year, NACE_BR)
 firm_data_select[, `:=`(
@@ -88,8 +89,27 @@ firm_data_select[, `:=`(
     size_decile = as.integer(ifelse(n_firms_in_industry > 10, pmin(10L, ceiling(10 * rank_within_industry / n_firms_in_industry)), NA)),
     size_percentile = as.integer(ifelse(n_firms_in_industry > 100, pmin(100L, ceiling(100 * rank_within_industry / n_firms_in_industry)), NA)),
     size_1000tile = as.integer(ifelse(n_firms_in_industry > 1000, pmin(1000L, ceiling(1000 * rank_within_industry / n_firms_in_industry)), NA)),
-    leader = ifelse(rank_within_industry == n_firms_in_industry, 1L, 0L)
+    leader = ifelse(n_firms_in_industry > 1 & rank_within_industry == n_firms_in_industry, 1L, 0L),
+    top_4_leaders = ifelse(n_firms_in_industry > 4 & rank_within_industry > (n_firms_in_industry - 4), 1L, 0L),
+    top_10_leaders = ifelse(n_firms_in_industry > 10 & rank_within_industry > (n_firms_in_industry - 10), 1L, 0L)
   )] %>%
+  # Add a measure of how far away leaders are from the rest of the distribution, share of leaders (top1, top4, top10) in total industry revenue
+  .[, `:=`(
+    leader_rev_share = sum(within_industry_rev_share[leader == 1], na.rm = TRUE),
+    top_4_leaders_rev_share = sum(within_industry_rev_share[top_4_leaders == 1], na.rm = TRUE),
+    top_10_leaders_rev_share = sum(within_industry_rev_share[top_10_leaders == 1], na.rm = TRUE),
+    diff_leader_vs_2nd = 
+      {
+        # Find the second highest nq_bar within each (year, NACE_BR) group
+        nq_bars <- nq_bar[order(-nq_bar)]
+        if (length(nq_bars) > 1 && !is.na(nq_bars[2]) && nq_bars[1] != 0) {
+          (nq_bars[1] - nq_bars[2]) / nq_bars[1]
+        } else {
+          NA_real_
+        }
+      }
+  ), by = .(year, NACE_BR)] %>%
+
   # .[, c("rank_within_industry", "n_firms_in_industry") := NULL] %>%
   # 2) Build the categorical buckets
   #   a) young/mature x small/medium/large
@@ -121,8 +141,23 @@ firm_data_select[, `:=`(
   #   f) young/mature x top firm (compact construction)
   .[, age_leader := ifelse(is.na(young) | is.na(leader), NA,
     paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(leader == 1, "leader", "follower"))
+  )] %>%
+  #  g) young/mature x top 4 firms (compact construction)
+  .[, age_top_4_leaders := ifelse(is.na(young) | is.na(top_4_leaders), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_4_leaders == 1, "top_4", "not_top_4"))
+  )] %>%
+  #  h) young/mature x top 10 firms (compact construction)
+  .[, age_top_10_leaders := ifelse(is.na(young) | is.na(top_10_leaders), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_10_leaders == 1, "top_10", "not_top_10"))
   )]
 
+setorder(firm_data_select, NACE_BR, year, rank_within_industry)
+  View(firm_data_select %>% select(
+    firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
+    size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
+    leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
+    age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
+  ))
 ## Filter by prodcom firms or sectors
 firm_data_select_prodcom_firms<-firm_data_select[firmid %in% prodcom_firms]
 firm_data_select <- firm_data_select[ NACE_2d %in% prodcom_sectors]
