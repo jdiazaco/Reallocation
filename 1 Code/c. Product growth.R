@@ -82,7 +82,7 @@ firm_data_select[!is.na(birth_year) & birth_year == year, empl_l := 0]
 # 1) Compute quartile/decile/percentile within (year, NACE_BR)
 firm_data_select[, `:=`(
   rank_within_industry = frank(nq_bar, ties.method = "average", na.last = "keep"),
-  n_firms_in_industry  = .N
+  n_firms_in_industry  = sum(!is.na(nq_bar))
 ), by = .(year, NACE_BR)] %>%
   .[, `:=`(
     size_quartile = as.integer(ifelse(n_firms_in_industry > 4, pmin(4L, ceiling(4 * rank_within_industry / n_firms_in_industry)), NA)),

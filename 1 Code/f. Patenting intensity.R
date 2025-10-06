@@ -430,24 +430,27 @@ patenting_products <- readRDS("patenting_products_firm_level.RDS") %>% as.data.t
 # n_followers: number of followers in the industry that year
 # lagged versions of the above variables
 
-industry_year_data <- patenting_products[, .(
-  leader_log_new_products = asinh(new_products[leader==1]),
-  follower_log_new_products = asinh(mean(new_products[leader==0], na.rm=T)),
-  leader_patent = max(patent[leader == 1], na.rm = T),
-  follower_patent = ifelse(.N > 1, max(patent[leader == 0], na.rm = T), 0),
-  share_follower_patent = ifelse(.N > 1, mean(patent[leader == 0], na.rm = T), 0),
-  n_firms = .N,
-  leader_empl_growth = ifelse(any(leader == 1), empl_growth[leader == 1][1], NA_real_),
-  follower_empl_growth = ifelse(.N > 1, mean(empl_growth[leader == 0], na.rm = T), NA_real_),
-  leader_nq_growth = ifelse(any(leader == 1), nq_growth[leader == 1][1], NA_real_),
-  follower_nq_growth = ifelse(.N > 1, mean(nq_growth[leader == 0], na.rm = T), NA_real_),
-  leader_capital_growth = ifelse(any(leader == 1), capital_growth[leader == 1][1], NA_real_),
-  follower_capital_growth = ifelse(.N > 1, mean(capital_growth[leader == 0], na.rm = T), NA_real_),
-  n_followers = sum(leader == 0),
-  empl_bar=sum(empl_bar, na.rm=T),
-  nq_bar=sum(nq_bar, na.rm=T),
-  capital_bar=sum(capital_bar, na.rm = T)
-), by = .(NACE_BR, year)]
+for (leader_measure in c("leader", "top_4_leaders", "top_10_leaders")) {
+  industry_year_data <- patenting_products[, .(
+    leader_log_new_products = mean(asinh(new_products[get(leader_measure) == 1]), na.rm = TRUE),
+    follower_log_new_products = mean(asinh(new_products[get(leader_measure) == 0]), na.rm = TRUE),
+    leader_patent = mean(patent[get(leader_measure) == 1], na.rm = TRUE),
+    follower_patent = mean(patent[get(leader_measure) == 0], na.rm = TRUE),
+    share_follower_patent = mean(patent[get(leader_measure) == 0], na.rm = TRUE),
+    n_firms = sum(!is.na(nq_bar)),
+    leader_empl_growth = mean(empl_growth[get(leader_measure) == 1], na.rm = TRUE),
+    follower_empl_growth = mean(empl_growth[get(leader_measure) == 0], na.rm = TRUE),
+    leader_nq_growth = mean(nq_growth[get(leader_measure) == 1], na.rm = TRUE),
+    follower_nq_growth = mean(nq_growth[get(leader_measure) == 0], na.rm = TRUE),
+    leader_capital_growth = mean(capital_growth[get(leader_measure) == 1], na.rm = TRUE),
+    follower_capital_growth = mean(capital_growth[get(leader_measure) == 0], na.rm = TRUE),
+    n_followers = sum(get(leader_measure) == 0),
+    empl_bar = sum(empl_bar, na.rm = TRUE),
+    nq_bar = sum(nq_bar, na.rm = TRUE),
+    capital_bar = sum(capital_bar, na.rm = TRUE)
+  ), by = .(NACE_BR, year)]
+  # assign(paste0("industry_year_data_", leader_measure), industry_year_data)
+}
 
 # Create lagged variables
 lagged_vars <- c(
