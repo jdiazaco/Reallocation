@@ -17,9 +17,13 @@ growth_creator<-function(data, normal_cols, n_lag, by_vars=c('firmid','year'), c
 
   if(create_born_died){
 
+    if(by_vars[1]!="firmid"){
+      warning("by_vars[1] should be firmid to create born and died variables")
+    }
+
     data[, `:=`(first_year = min(year, na.rm = T),
                 last_year = max(year, na.rm = T)),
-         by = .(by_vars[1])]
+         by = eval(by_vars[1])]
 
     data[, `:=`(
       born = !is.na(first_year) & first_year == year,

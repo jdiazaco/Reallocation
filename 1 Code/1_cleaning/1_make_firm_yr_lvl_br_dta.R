@@ -131,88 +131,21 @@ firm_yr_lvl_br_dta[, `:=`(sum_costs = (labor_cost + (capital * share_capital_cos
     nq_raw_materials = ifelse(raw_materials != 0, nq / raw_materials, 0)
   )]
 
-
-
 ## generate lagged variables Juli?n: add capital
-normal_cols = c("nq", "empl", "capital", "turnover", "raw_materials", "labor_cost") #, "tfp"
-firm_yr_lvl_br_dta_temp <- growth_creator(firm_yr_lvl_br_dta, normal_cols, n_lag = 1, by_vars = c("year", "firmid"), create_born_died = T)
+normal_cols = c("nq", "empl", "capital", "raw_materials", "labor_cost") #, "tfp"
+firm_yr_lvl_br_dta_temp <- growth_creator(data=firm_yr_lvl_br_dta, 
+normal_cols=normal_cols, 
+n_lag = 1, 
+by_vars = c("firmid", "year"), 
+create_born_died = T
+)
 firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, firm_yr_lvl_br_dta_temp, by = c("year", "firmid"), all = T)
 firm_yr_lvl_br_dta[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
-
-
-# data <- firm_yr_lvl_br_dta
-# n_lag = 1
-# by_vars =c("year", "firmid", "birth_year", "death_year")
-
-# lag_cols = paste0(normal_cols,'_l')
-
-# firm_yr_lvl_br_dta_l = firm_yr_lvl_br_dta[year<end] %>% mutate(year = year + 1) %>% select(-NACE_BR) %>% select (firmid, year, birth_year, death_year, normal_cols)
-# colnames(firm_yr_lvl_br_dta_l)[names(firm_yr_lvl_br_dta_l) %in% normal_cols] = lag_cols
-# firm_yr_lvl_br_dta = merge(firm_yr_lvl_br_dta, firm_yr_lvl_br_dta_l,by=c('firmid','year', 'birth_year', 'death_year'), all = T)
-# rm(firm_yr_lvl_br_dta_l); gc()
-
-# ## Define birth and death, make corrections to first and last year
-# firm_yr_lvl_br_dta[, `:=`(born = !is.na(birth_year) & birth_year == year,
-#                 died = !is.na(death_year) & death_year < year)]
-
-# firm_yr_lvl_br_dta[, status:= ifelse(born, 'born', ifelse(died, 'died', 'survived'))]
-
-# ## correct first / last year
-# for(i in seq_along(normal_cols)){
-#   firm_yr_lvl_br_dta[born == T, lag_cols[i]:= 0]
-#   firm_yr_lvl_br_dta[died == T, normal_cols[i]:= 0]
-# }
-
-# ## Define 2-year averages,quantiles, growth_rates, shares
-# bar_cols = paste0(normal_cols, '_bar')
-# growth_cols = paste0(normal_cols, '_growth')
-# reallocation_cols = paste0(normal_cols, '_reallocation')
-# growth_weighted_cols = paste0(growth_cols, '_weighted')
-# reallocation_weighted_cols = paste0(reallocation_cols, '_weighted')
-
-# share_cols = paste0(normal_cols, '_share')
-
-# ## 2-year averages, share, growth, weighted growth
-# for (i in seq_along(normal_cols)){
-#   col = normal_cols[i]; lag = lag_cols[i]
-
-#   firm_yr_lvl_br_dta[, bar_cols[i] := .5*(get(col)+get(lag))]
-#   firm_yr_lvl_br_dta[year == start,bar_cols[i] := NA]
-
-#   # if(normal_cols[i]!='nq'){
-#   firm_yr_lvl_br_dta[, share_cols[i] := get(bar_cols[i])/ sum(get(bar_cols[i]), na.rm = T), by = year]
-#   firm_yr_lvl_br_dta[, reallocation_cols[i] :=  abs(ifelse(get(bar_cols[i]) != 0,
-#                                                  (get(col)-get(lag))/get(bar_cols[i]), 0))]
-#   firm_yr_lvl_br_dta[, growth_cols[i] :=  ifelse(get(bar_cols[i]) != 0,
-#                                        (get(col)-get(lag))/get(bar_cols[i]), 0)]
-#   firm_yr_lvl_br_dta[, growth_weighted_cols[i] := get(share_cols[i])* get(growth_cols[i])]
-#   firm_yr_lvl_br_dta[, reallocation_weighted_cols[i] := get(share_cols[i])* get(reallocation_cols[i])]
-
-#   # }
-# }
-
-# ## merge in the NACE data
-# firm_yr_lvl_br_dta = merge(firm_yr_lvl_br_dta, readRDS('firm_NACE_BR.rds'), by = c('firmid', 'year','NACE_BR'), all.x =T)
-
-# Juli?n: Fix missing NACE codes by assuming that the industry of the firm when the NACE code is missing is the same as the previous available year
-
-
 
 ## generate employment buckets (I use the divisions present in the ICT data)
 breaks = c(-Inf, 10, 50, 250, Inf)
 categories = c("<10", "10-50", "50-250", "250+")
 firm_yr_lvl_br_dta[, labor_bucket := cut(empl_bar, breaks = breaks, labels = categories, right = F)]
-
-# ## keep only necessary variables 
-# firm_yr_lvl_br_dta = firm_yr_lvl_br_dta %>% select(c("firmid", "NACE_BR" ,'year', "birth_year" , "death_year" ,'age','young',"born", "died", "status", "industry",
-#                                  'empl', 'empl_l', "empl_bar", "empl_share" , "empl_growth" ,"empl_growth_weighted" , "empl_reallocation", "empl_reallocation_weighted",
-#                                  "turnover", "raw_materials",
-#                                  'nq', 'nq_l', 'nq_bar', "nq_growth",
-#                                  "nq_capital", "nq_raw_materials", "nq_empl",
-#                                  "tfp", "tfp_l", "tfp_bar", "tfp_growth",
-#                                  "sector" ,'sector_labor_bucket','manufacturing','services','other_sector', "labor_cost", "legal_birth_year",
-#                                  "high_tech" , "low_tech" ,"superstar" ,"labor_bucket", 
-#                                  "capital", 'capital_l', 'capital_bar', "capital_growth", "capital_growth_weighted", "capital_reallocation" ))   
 
 # Juli?n Create size variables for regressions
 firm_yr_lvl_br_dta[, size := case_when(
@@ -229,8 +162,6 @@ firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, linkedin, by = c("firmid", "year
 firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
 firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
 
-### Size quantiles and age brackets
-# 1) Compute quartile/decile/percentile within (year, NACE_BR)
 firm_data_select[, `:=`(
   rank_within_industry = frank(nq_bar, ties.method = "average", na.last = "keep"),
   n_firms_in_industry  = .N
@@ -240,8 +171,27 @@ firm_data_select[, `:=`(
     size_decile = as.integer(ifelse(n_firms_in_industry > 10, pmin(10L, ceiling(10 * rank_within_industry / n_firms_in_industry)), NA)),
     size_percentile = as.integer(ifelse(n_firms_in_industry > 100, pmin(100L, ceiling(100 * rank_within_industry / n_firms_in_industry)), NA)),
     size_1000tile = as.integer(ifelse(n_firms_in_industry > 1000, pmin(1000L, ceiling(1000 * rank_within_industry / n_firms_in_industry)), NA)),
-    leader = ifelse(rank_within_industry == n_firms_in_industry, 1L, 0L)
+    leader = ifelse(n_firms_in_industry > 1 & rank_within_industry == n_firms_in_industry, 1L, 0L),
+    top_4_leaders = ifelse(n_firms_in_industry > 4 & rank_within_industry > (n_firms_in_industry - 4), 1L, 0L),
+    top_10_leaders = ifelse(n_firms_in_industry > 10 & rank_within_industry > (n_firms_in_industry - 10), 1L, 0L)
   )] %>%
+  # Add a measure of how far away leaders are from the rest of the distribution, share of leaders (top1, top4, top10) in total industry revenue
+  .[, `:=`(
+    leader_rev_share = sum(within_industry_rev_share[leader == 1], na.rm = TRUE),
+    top_4_leaders_rev_share = sum(within_industry_rev_share[top_4_leaders == 1], na.rm = TRUE),
+    top_10_leaders_rev_share = sum(within_industry_rev_share[top_10_leaders == 1], na.rm = TRUE),
+    diff_leader_vs_2nd = 
+      {
+        # Find the second highest nq_bar within each (year, NACE_BR) group
+        nq_bars <- nq_bar[order(-nq_bar)]
+        if (length(nq_bars) > 1 && !is.na(nq_bars[2]) && nq_bars[1] != 0) {
+          (nq_bars[1] - nq_bars[2]) / nq_bars[1]
+        } else {
+          NA_real_
+        }
+      }
+  ), by = .(year, NACE_BR)] %>%
+
   # .[, c("rank_within_industry", "n_firms_in_industry") := NULL] %>%
   # 2) Build the categorical buckets
   #   a) young/mature x small/medium/large
@@ -273,7 +223,23 @@ firm_data_select[, `:=`(
   #   f) young/mature x top firm (compact construction)
   .[, age_leader := ifelse(is.na(young) | is.na(leader), NA,
     paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(leader == 1, "leader", "follower"))
+  )] %>%
+  #  g) young/mature x top 4 firms (compact construction)
+  .[, age_top_4_leaders := ifelse(is.na(young) | is.na(top_4_leaders), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_4_leaders == 1, "top_4", "not_top_4"))
+  )] %>%
+  #  h) young/mature x top 10 firms (compact construction)
+  .[, age_top_10_leaders := ifelse(is.na(young) | is.na(top_10_leaders), NA,
+    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_10_leaders == 1, "top_10", "not_top_10"))
   )]
+
+setorder(firm_data_select, NACE_BR, year, rank_within_industry)
+  View(firm_data_select %>% select(
+    firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
+    size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
+    leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
+    age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
+  ))
 
 ## Filter by prodcom firms or sectors
 firm_data_select <-firm_data_select[firmid %in% prodcom_firms]
