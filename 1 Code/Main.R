@@ -30,21 +30,11 @@ if(grepl("My Drive", dirname(rstudioapi::getActiveDocumentContext()$path))){
   code_dir<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
 }else{
   if(grepl("/Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))){
-<<<<<<< Updated upstream
-    code_dir<-"/Users/lse/Documents/Reallocation/"
-  }else{
-    code_dir<-"~/Reallocation/"
-  }
-}
-
- 
-=======
     main_dir<-"/Users/lse/Documents/Reallocation/"
   }else{
     main_dir<-"~/Reallocation/"
   }
 }
->>>>>>> Stashed changes
 
 
 #Bring tools
