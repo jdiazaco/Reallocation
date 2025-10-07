@@ -100,7 +100,7 @@ source(paste0(code_dir, ".lintr.R"))
 lint(paste0(code_dir, ".lintr.R"))
 
 # Define level of aggregation for product level data
-cpa_or_pf<-"cpa" #Options: cpa, prodfra_plus
+cpa_or_pf<-"cpa" #Options: cpa, prodfra_plus, "prodfra_plus", "prodcom", "cpa", "NACE_4d_pf", "NACE_2d_pf"
 if (cpa_or_pf == "cpa") {
   ext <- "_cpa"
   digits <- c(0, 1, 2, 4, 6)
@@ -119,5 +119,5 @@ if (cpa_or_pf == "cpa") {
 
 
 
-output_dir <- paste0(output_dir, "2025/Export 22.05/")
+output_dir <- paste0(output_dir, "2025/Export 16.10/")
 output_dir_creator(output_dir)

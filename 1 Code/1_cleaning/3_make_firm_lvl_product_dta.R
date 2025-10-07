@@ -1,8 +1,98 @@
 # setup -------------------------------------------------------------------
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
 
-# dummy <- F
+#5) prepare firm level decompositions of product data ------------------------------------
+product_data <- read_parquet(paste0("2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
 
+##5.1) calculate extensive margin product growth/reallocation rate -------------------
+firm_data_ex = product_data[, .(products_l = sum(active_l),
+                                products = sum(active),
+                                prod_added = sum(active & !active_l),
+                                prod_removed = sum(!active & active_l)),
+                            by = .(firmid, year)]
+firm_data_ex[, `:=`(entrance_growth = prod_added / products,
+                    exit_growth = prod_removed / products_l,
+                    entrance_share = products/sum(products),
+                    exit_share = products_l / sum(products_l)),
+             by =year]
+
+firm_data_ex[status == 'born', exit_growth:=0]
+firm_data_ex[status == 'died', entrance_growth:=0]
+firm_data_ex[,status:= NULL]
+firm_data_ex[, `:=`(entrance_growth_weighted  = entrance_growth * entrance_share,
+                    exit_growth_weighted      = exit_growth     * exit_share)] 
+
+vars<-c("entrance", "exit")
+for (var in vars){
+  firm_data_ex[[paste0(var, "_reallocation")]]<-firm_data_ex[[paste0(var, "_growth")]]
+  firm_data_ex[[paste0(var, "_reallocation_weighted")]]<-firm_data_ex[[paste0(var, "_growth_weighted")]]
+}
+
+firm_data_ex = firm_data_ex %>% select(-c('products_l', 'products', 'prod_added', 'prod_removed'))
+saveRDS(firm_data_ex, 'firm_level_ex_margin.rds')
+
+# make_summary_stats(firm_data_ex, c("entrance_growth", "exit_growth", "entrance_share", "exit_share"), "year", "ex_margin_year.xls")
+# description("ex_margin_year.csv", "Summary statistics for average entrance growth, exit growth, entrance share and exit share per year.\n")
+# make_summary_stats(firm_data_ex, c("entrance_growth", "exit_growth", "entrance_share", "exit_share"), "full_sample", "ex_margin.xls")
+# description("ex_margin.csv", "Summary statistics for average entrance growth, exit growth, entrance share and exit share.\n")
+
+##5.2) calculate intensive margin product reallocation rate -------------------
+product_data = product_data %>% select(firmid, prodfra_plus, year, rev_l, rev, rev_bar,
+                                       rev_reallocation, within_firm_rev_share, everything())
+firm_data_in = product_data[, .(rev=sum(rev),
+                                rev_l=sum(rev_l),
+                                rev_bar = .5*(sum(rev_bar)),#Why times 0.5?
+                                rev_reallocation = sum(rev_reallocation*within_firm_rev_share)),
+                            by = .(firmid, year,birth_year, death_year)] #Here aggregating by firm and year, deleting product-lines.
+firm_data_in[, rev_share :=  rev_bar /sum(rev_bar), by = year] #Here aggregating by year in a new variable, getting the revenue share for the whole economy, but not collapsing the firm-year information.
+firm_data_in[, `:=`(rev_reallocation_weighted = rev_reallocation * rev_share, rev_bar =NULL)]
+saveRDS(firm_data_in, 'firm_level_reallocation_in_margin.rds')
+
+# make_summary_stats(firm_data_in, c("rev_reallocation"), "year", "in_margin_reallocation_year.xls")
+# description("in_margin_reallocation_year.xls", "Summary statistics for average revenue reallocation rate. Source: Prodcom.\n")
+
+##5.3) calculate intensive margin product growth rate -------------------
+
+product_data = product_data %>% select(firmid, prodfra_plus, year, rev_l, rev, rev_bar,
+                                       rev_growth, within_firm_rev_share, everything())
+firm_data_in = product_data[, .(rev=sum(rev),
+                                rev_l=sum(rev_l),
+                                rev_bar = .5*(sum(rev_bar)),#Why times 0.5?
+                                rev_growth = sum(rev_growth*within_firm_rev_share)),
+                            by = .(firmid, year,birth_year, death_year)] #Here aggregating by firm and year, deleting product-lines.
+firm_data_in[, rev_share :=  rev_bar /sum(rev_bar), by = year] #Here aggregating by year in a new variable, getting the revenue share for the whole economy, but not collapsing the firm-year information.
+firm_data_in[, `:=`(rev_growth_weighted = rev_growth * rev_share, rev_bar =NULL)]
+saveRDS(firm_data_in, 'firm_level_growth_in_margin.rds')
+
+# make_summary_stats(firm_data_in, c("rev_growth"), "year", "in_margin_growth_year.xls")
+# description("in_margin_growth_year.xls", "Summary statistics for average groeth reallocation rate, per year. Source: Prodcom.\n")
+
+
+#6) generate final firm Level dataset - growth and reallocation --------------------------------------------------------
+# rm(list = ls())
+# gc()
+# setwd('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/2 Data/')
+
+## import data
+sbs_data = readRDS('sbs_br_combined_cleaned.rds')
+firm_data_ex = readRDS('firm_level_ex_margin.rds')
+firm_data_in_reallocation = readRDS('firm_level_reallocation_in_margin.rds')
+firm_data_in_growth = readRDS('firm_level_growth_in_margin.rds')
+
+
+## merge together 
+product_data = merge(firm_data_in_reallocation,firm_data_ex, all = T) %>% mutate(in_prodcom = T)
+combined_data = merge(sbs_data, product_data, by = c('firmid', 'year', 'birth_year', 'death_year'), all = T)
+combined_data[is.na(in_prodcom ), in_prodcom := F]
+combined_data[,full_sample:= 1]
+saveRDS(combined_data, 'combined_sbs_br_prodcom_data.rds')
+
+## merge together 
+product_data = merge(firm_data_in_growth,firm_data_ex, all = T) %>% mutate(in_prodcom = T)
+combined_data = merge(sbs_data, product_data, by = c('firmid', 'year', 'birth_year', 'death_year'), all = T)
+combined_data[is.na(in_prodcom ), in_prodcom := F]
+combined_data[,full_sample:= 1]
+saveRDS(combined_data, 'combined_sbs_br_prodcom_data_growth.rds')
 
 #Bring in necessary firm and product information
 firm_data_select<-readRDS("sbs_br_data_prodcom_firms.RDS") %>% filter(year>2009)

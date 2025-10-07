@@ -11,9 +11,18 @@ growth_creator<-function(data, normal_cols, n_lag, by_vars=c('firmid','year'), c
   vars_to_keep <- c(by_vars, normal_cols)
 
   data<-data %>% select(vars_to_keep)
-  data_l = data[year<end] %>% mutate(year = year + n_lag) %>% select(by_vars, normal_cols)
+
+  data[, `:=`(
+    first_year = min(year, na.rm = T),
+    last_year = max(year, na.rm = T)
+  ),
+  by = eval(setdiff(by_vars, "year"))
+  ]
+
+  data_l = data[year<end] %>% mutate(year = year + n_lag) %>% select(by_vars, normal_cols, "first_year", "last_year")
   colnames(data_l)[names(data_l) %in% normal_cols] = lag_cols
-  data = merge(data, data_l, by = by_vars, all = T)
+
+  data = merge(data, data_l, by = c(by_vars, "first_year", "last_year"), all = T)
 
   if(create_born_died){
 
@@ -24,6 +33,7 @@ growth_creator<-function(data, normal_cols, n_lag, by_vars=c('firmid','year'), c
     data[, `:=`(first_year = min(year, na.rm = T),
                 last_year = max(year, na.rm = T)),
          by = eval(by_vars[1])]
+
 
     data[, `:=`(
       born = !is.na(first_year) & first_year == year,

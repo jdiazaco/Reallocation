@@ -1,8 +1,8 @@
 # setup -------------------------------------------------------------------
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
-output_dir <- paste0(output_dir, "2025/Export 22.05/")
-output_dir_creator(output_dir)
-dummy <- F
+
+firm_yr_lvl_br_dta <- read_parquet("1_firm_yr_lvl_br_dta.parquet")
+
 
 ##define component datasets for later use & export results 
 birth_death = unique(firm_yr_lvl_br_dta %>% select(firmid, birth_year, death_year))
