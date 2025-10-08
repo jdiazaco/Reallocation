@@ -11,11 +11,17 @@ filter_min_n_employees <- 1
 # raw_dir<-raw_dir_public
 
 if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
-  firm_yr_lvl_br_dta = readRDS("sbs_br_combined.rds") %>%
+  firm_yr_lvl_br_dta = setDT(readRDS("sbs_br_combined.rds")) %>%
     rename(
       economic_birth_year = birth_year, economic_death_year = death_year,
       legal_birth_year = firm_birth_year
-    )
+    )  %>%
+    .[, `:=`(economic_birth_year = min(year), economic_death_year = max(year)), by = firmid] %>%
+    .[, `:=`(
+      NACE_BR = str_pad(NACE_BR, 4, side = "left", pad = "0"),
+      NACE_2d = substr(NACE_BR, 1, 2)
+  )]
+
 } else {
   ## import BR data
   br_data = rbindlist(lapply(c(start:end), function(yr) {
@@ -116,7 +122,6 @@ firm_yr_lvl_br_dta[, consolidated_birth_year := fifelse(
 hist(firm_yr_lvl_br_dta$consolidated_birth_year, breaks = 121)
 firm_yr_lvl_br_dta[, firm_age := year - consolidated_birth_year]
 
-
 firm_yr_lvl_br_dta[, young := ifelse(is.na(firm_age), NA, ifelse(firm_age <= 5, 1, 0))]
 firm_yr_lvl_br_dta <- deflate(firm_yr_lvl_br_dta, "NACE_BR", c("nq", "capital", "turnover", "raw_materials", "labor_cost"), 2009)
 
@@ -133,13 +138,14 @@ firm_yr_lvl_br_dta[, `:=`(sum_costs = (labor_cost + (capital * share_capital_cos
 
 ## generate lagged variables Juli?n: add capital
 normal_cols = c("nq", "empl", "capital", "raw_materials", "labor_cost") #, "tfp"
-firm_yr_lvl_br_dta_temp <- growth_creator(data=firm_yr_lvl_br_dta, 
-normal_cols=normal_cols, 
-n_lag = 1, 
-by_vars = c("firmid", "year"), 
-create_born_died = T
+firm_yr_lvl_br_dta <- growth_creator(
+  data = firm_yr_lvl_br_dta,
+  normal_cols = normal_cols,
+  n_lag = 1,
+  by_vars = c("firmid", "year", "NACE_BR", "NACE_2d", "DEFind"),
+  create_born_died = T
 )
-firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, firm_yr_lvl_br_dta_temp, by = c("year", "firmid"), all = T)
+
 firm_yr_lvl_br_dta[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
 
 ## generate employment buckets (I use the divisions present in the ICT data)
@@ -162,7 +168,16 @@ firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, linkedin, by = c("firmid", "year
 firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
 firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
 
-firm_data_select[, `:=`(
+# Create market share measures
+firm_yr_lvl_br_dta[, within_industry_rev_share := nq_bar / sum(nq_bar, na.rm = T),
+  by = .(NACE_BR, year)
+]
+firm_yr_lvl_br_dta[, within_economy_rev_share_BR := nq_bar / sum(nq_bar, na.rm = T),
+  by = .(year)
+]
+
+# 1) Create size measures: rank within industry, size buckets (quartile, decile, percentile, 1000tile), leader and top_4_leaders
+firm_yr_lvl_br_dta[, `:=`(
   rank_within_industry = frank(nq_bar, ties.method = "average", na.last = "keep"),
   n_firms_in_industry  = .N
 ), by = .(year, NACE_BR)] %>%
@@ -233,24 +248,24 @@ firm_data_select[, `:=`(
     paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_10_leaders == 1, "top_10", "not_top_10"))
   )]
 
-setorder(firm_data_select, NACE_BR, year, rank_within_industry)
-  View(firm_data_select %>% select(
+setorder(firm_yr_lvl_br_dta, NACE_BR, year, rank_within_industry)
+  View(firm_yr_lvl_br_dta %>% select(
     firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
     size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
     leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
     age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
   ))
 
-## Filter by prodcom firms or sectors
-firm_data_select <-firm_data_select[firmid %in% prodcom_firms]
+# ## Filter by prodcom firms or sectors
+# firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[firmid %in% prodcom_firms]
 
-# Remove outliers
-firm_data_select <- outliers_remove(firm_data_select, 0.01)
+# # Remove outliers
+# firm_yr_lvl_br_dta <- outliers_remove(firm_yr_lvl_br_dta, 0.01)
 
 # Juli?n: Only firmid, year, nace information
-NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d")]
+NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d", "DEFind")]
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
-save_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
-save_parquet(NACE_BR_data, 'ancillary_datasets/NACE_BR_data.parquet')
+write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
+write_parquet(NACE_BR_data, 'Ancillary datasets/NACE_BR_data.parquet')
 

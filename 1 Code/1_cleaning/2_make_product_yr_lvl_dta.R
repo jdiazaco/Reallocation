@@ -1,15 +1,12 @@
+# This script processes Prodcom data to create a firm-product-year level dataset.
+# It aggregates product data to various classification levels, calculates growth metrics, and prepares the data for analysis.
+# The script is designed to be flexible, allowing for different levels of product aggregation and filtering options.
+
 # setup -------------------------------------------------------------------
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
 dummy <- FALSE
 
 #3) extract product level data from Prodcom  ----------------------------------------------
-
-# We can:
-# 1. Use 8-digit (prodcom) or 10-digit (prodfra) product codes. Based on this, we bring in 8 or 10 digit product code harmonization to create the Prodcom database
-# 2. EAP has three different categorizations for prodfra codes: prodfra nested in prodcon, prodfra outside of prodcom or prodfra not nested, but with Prodcom information.
-# We can decide to use only prodfra codes nested in prodcom or use all prodfra codes
-# 3. Exclude certain industries (e.g. public utilities industries)
-# We do the above by setting parameters below. The name of the files we will save changes depending on those parameters
 
 # Set parameters for prodfra-pcc8 and excluded industries
 prodfra_or_pcc8<-"prodfra"
@@ -87,119 +84,6 @@ product_data[, unit_collapsed:=paste(unique(unit[!is.na(unit) & unit!="M2"]), co
 product_data<-merge(product_data, unit_collapsed, by.x=c("unit_collapsed", "unit"), by.y=c("unit_collapsed", "unit_obv"), all.x = T)
 product_data[, sold_q:=sold_q*factor]
 
-# # Bring in BR NACE information
-# product_data<-merge(product_data, NACE_BR_data, by=c("firmid", "year"), all.x=T)
-
-# # Create alternative NACE information: Take the first 4 digits of the prodfra_plus code
-# product_data<-product_data %>% mutate(NACE_prodfra=substr(prodfra_plus, 1, 4))
-
-# # Juli?n: Exclude firms and product lines in excluded industries if the parameter is set above
-# exclude_industries<-T
-# parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
-# # These are industries that are not continuously covered by prodcom (specifically, they were not covered in 2009)
-# if(exclude_industries){
-#   ind_to_exclude <- c(19, 35,36,37,38,39,46) 
-  
-#   # Exclude firms and product lines in industries if the parameter is set above
-#   product_data<-product_data %>% filter(!(substr(NACE, 1, 2) %in% ind_to_exclude),
-#                                         !(NACE_2d %in% ind_to_exclude))
-# }
-
-# # Deflate prodcom revenue data using industry deflators
-# # if(!dummy){
-# #   product_data<-deflate(product_data, "NACE", "rev", start)
-# # }
-# # make_summary_stats(product_data, c("rev", "HHI"), "full_sample", "product_data.xlsx")
-# # description("product_data.xlsx", "Summary statistics on revenue and within-firm concentration using PRODCOM data.\n")
-# # make_summary_stats(product_data, c("rev", "HHI"), "DEFind", "product_data_industry.xlsx")
-# # description("product_data_industry.xlsx", "Summary statistics on revenue and within-firm concentration using PRODCOM data, per NACE industry.\n")
-
-# ## generate lags
-# normal_cols = c('active', 'rev')
-# lag_cols = paste0(normal_cols, '_l')
-# product_data_l = product_data[year<end, ] %>% mutate(year = year + 1) %>%
-#   select(firmid,year, prodfra_plus, normal_cols)
-# colnames(product_data_l)[names(product_data_l) %in% normal_cols] = lag_cols
-
-# product_data = merge(product_data, product_data_l, by=c("firmid", "year", "prodfra_plus"), all = T)
-
-# # Juli?n: Fix NAs in DEFind 
-# nace_DEFind <- fread("nace_DEFind.conc", colClasses = c('character'))
-# product_data$DEFind<-NULL
-# product_data <- merge(product_data, nace_DEFind, by.x = "NACE_prodfra", by.y = "nace", all.x = T) %>% select(firmid, year, prodfra_plus, rev, everything())
-# #Juli?n: add code_entry_year
-# columns = c('firmid', 'prodfra_plus', 'year', "code_entry_year")
-# for (i in seq_along(normal_cols)){
-#   product_data[is.na(get(normal_cols[i])), normal_cols[i]:=0]
-#   product_data[is.na(get(lag_cols[i])), lag_cols[i]:=0]
-#   columns = c(columns, lag_cols[i], normal_cols[i])
-# }
-# product_data[,`:=`(active = active==1, active_l = active_l==1)]
-
-# ## add in birth/death status,
-# product_data = merge(product_data,birth_death, by=c('firmid'))
-# product_data[, `:=`(born = !is.na(birth_year) & birth_year == year,
-#                     died = !is.na(death_year) & death_year < year)]
-# product_data[, status:= ifelse(born, 'born', ifelse(died, 'died', 'survived'))]
-
-# ## fix first / last year of data 
-# product_data[born == T, lag_cols:= 0]
-# product_data[died == T, normal_cols := 0] 
-
-# setorder(product_data, firmid, prodfra_plus, year)
-# product_data<-product_data %>% group_by(firmid) %>% mutate( first_year=min(year), last_year=max(year) )
-# product_data <- product_data %>% group_by(firmid, prodfra_plus) %>% mutate(forward_year=dplyr::lead(year), lag_year=dplyr::lag(year))
-# #Juli?n: Create prodcom coverage gap variables
-# product_data <- product_data %>% group_by(firmid, prodfra_plus) %>% 
-#   mutate(gap=ifelse(forward_year==(year+1) & lag_year==(year-1), 0, ifelse(forward_year==year | lag_year==year, 0, 1)))
-# product_data <- product_data %>% mutate(gap=ifelse(is.na(gap),0,gap))
-
-# product_data <- product_data %>% select(firmid, prodfra_plus, year, first_year, last_year, gap, forward_year, lag_year, everything())
-# product_data<-as.data.table(product_data)
-# product_data[, rev_bar := .5*(rev + rev_l)]
-# #Juli?n: delete absolute values to have actual revenue growth (not reallocation)
-# product_data[, rev_growth := ifelse(rev_bar != 0, (rev - rev_l)/rev_bar, 0)]
-# product_data[, rev_reallocation := abs(ifelse(rev_bar != 0, abs(rev - rev_l)/rev_bar, 0))]
-# #Juli?n: Change gap years rev_growth=0, rev_reallocation=0 and rev_bar=0
-# product_data[, rev_growth := ifelse(gap==1,0, rev_growth)]
-# product_data[, rev_reallocation := ifelse(gap==1,0, rev_reallocation)]
-# product_data[, rev_bar := ifelse(gap==1,0, rev_bar)]
-# product_data[, within_firm_rev_share :=  rev_bar/ sum(rev_bar, na.rm = T),
-#              by = .(firmid,year)]
-# product_data[is.nan(within_firm_rev_share), within_firm_rev_share := 0]
-# product_data[, within_economy_rev_share :=  rev_bar/ sum(rev_bar, na.rm = T),
-#              by = .(year)]
-
-# ## generate product status variables 
-# ## Juli?n: Add paused status
-
-# product_data[, active_year := ifelse(active, year, NA)]
-# product_data[, `:=`(first_introduction = year == min(active_year, na.rm = T),
-#                     discontinued = year>max(active_year, na.rm = T) & !active), by= .(firmid, prodfra_plus)]
-# product_data[, `:=`(reintroduced = !first_introduction & active & !active_l,
-#                     paused= !discontinued & active_l & !active,
-#                     incumbent = active_l & active)]
-
-# ## export the data 
-# product_data = product_data %>% arrange(firmid, prodfra_plus, year) %>% select(columns, everything())
-
-# # make_summary_stats(product_data, c("rev", "rev_l", "gap", "HHI", "rev_growth"), "year", "product_data2_year")
-# # description("product_data2_DEFind.xlsx", 
-# #             "Summary statistics on revenue and within-firm concentration using PRODCOM data excluding utilities, per NACE 2 digit codes. \n")
-
-# saveRDS(product_data, paste0("product_level_growth_", filter_indicator,  "_.RDS"))
-
-# #4cpa) clean product level data from Prodcom  ----------------------------------------------
-
-# # Set parameters for prodfra-pcc8 and excluded industries
-# prodfra_or_pcc8<-"prodfra" # Although this is the cpa aggregation, this should be prodfra since we are bringing the prodfra (not pcc8) data from step 3
-# only_prodfra_in_prodcom<-FALSE
-# parameters(prodfra_or_pcc8, only_prodfra_in_prodcom)
-
-# # Set start and end years
-# start = 2009
-# end = 2022
-
 # # Bring in product_data
 # # product_data <- readRDS(paste0("product_data_", filter_indicator, "_.RDS"))
 product_data <- setDT(readRDS(paste0("product_data_10_digit_all_prodfra_.RDS")))
@@ -227,10 +111,14 @@ setcolorder(product_data, c(
 product_vars <- c("prodfra_plus", "prodcom", "cpa", "NACE_4d_pf", "NACE_2d_pf")
 agg_levels <- setNames(seq_along(product_vars), product_vars)
 
+product_data_og <- copy(product_data) # Keep a copy of the original data
+
 
 for (cpa_or_pf in product_vars) {
-
+  
   print(paste0("Aggregating to ", cpa_or_pf, " level"))
+
+  product_data <- copy(product_data_og) # Reset product_data to original data for each iteration
 
   # Get current aggregation level
   current_level <- agg_levels[[cpa_or_pf]]
@@ -260,52 +148,20 @@ for (cpa_or_pf in product_vars) {
   # Deflate prodcom revenue data using industry deflators
   # product_data <- deflate(product_data, "NACE", "rev", start)
 
-  product_data_temp <- growth_creator(
+  product_data <- growth_creator(
     data = product_data,
-    normal_cols = c("rev", "active"),
+    normal_cols = c("rev", "active", "sold_q"),
     n_lag = 1,
-    by_vars = c("firmid", cpa_or_pf, "year"),
-    create_born_died = TRUE
+    by_vars = c("firmid", "NACE_BR", "NACE_2d", vars_to_keep, cpa_or_pf, "year"),
+    create_born_died = TRUE,
+    data_type = "survey"
   )
 
-  product_data <- merge(product_data, product_data_temp, by = c("firmid", cpa_or_pf, "year"), all = TRUE)
-  rm(product_data_temp); gc()
+  product_data[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
 
-  # ## generate lags
-  # normal_cols = c('active', 'rev')
-  # lag_cols = paste0(normal_cols, '_l')
-  # product_data_l = product_data[year<end, ] %>% mutate(year = year + 1) %>%
-  #   select(firmid,year, cpa, normal_cols)
-  # colnames(product_data_l)[names(product_data_l) %in% normal_cols] = lag_cols
+  # Remove variables that start with "active" or "sold_q", but leave "active", "active_l", "sold_q" and "sold_q_l"
+  product_data <- product_data %>% select(-starts_with("active"), -starts_with("sold_q"), active, active_l, sold_q, sold_q_l)
 
-  # product_data = merge(product_data, product_data_l, by=c("firmid", "year", "cpa"), all = T)
-
-  # # Fix NAs in NACE
-  # product_data<-product_data %>% mutate(NACE=substr(cpa, 1, 4))
-
-  # Juli?n: Fix NAs in DEFind
-
-  # #Juli?n: add code_entry_year
-  # columns = c('firmid', 'cpa', 'year')
-  # for (i in seq_along(normal_cols)){
-  #   product_data[is.na(get(normal_cols[i])), normal_cols[i]:=0]
-  #   product_data[is.na(get(lag_cols[i])), lag_cols[i]:=0]
-  #   columns = c(columns, lag_cols[i], normal_cols[i])
-  # }
-  # product_data[,`:=`(active = active==1, active_l = active_l==1)]
-
-  # ## add in birth/death status,
-  # product_data = merge(product_data,birth_death, by=c('firmid'))
-  # product_data[, `:=`(born = !is.na(birth_year) & birth_year == year,
-  #                     died = !is.na(death_year) & death_year < year)]
-  # product_data[, status:= ifelse(born, 'born', ifelse(died, 'died', 'survived'))]
-
-  # ## fix first / last year of data
-  # product_data[born == T, lag_cols:= 0]
-  # product_data[died == T, normal_cols := 0]
-
-  # setorder(product_data, firmid, cpa, year)
-  # product_data<-product_data %>% group_by(firmid) %>% mutate( first_year=min(year), last_year=max(year) )
   product_data <- product_data[order(firmid, get(cpa_or_pf), year)]
   product_data[, forward_year := shift(year, type = "lead"), by = .(firmid, get(cpa_or_pf))]
   product_data[, lag_year := shift(year, type = "lag"), by = .(firmid, get(cpa_or_pf))]
@@ -316,12 +172,6 @@ for (cpa_or_pf in product_vars) {
   )]
   product_data[is.na(gap), gap := 0]
 
-  # product_data <- product_data %>% select(firmid, cpa_or_pf, year, first_year, last_year, gap, forward_year, lag_year, everything())
-  # product_data<-as.data.table(product_data)
-  # product_data[, rev_bar := .5*(rev + rev_l)]
-  # #Juli?n: delete absolute values to have actual revenue growth (not reallocation)
-  # product_data[, rev_growth := ifelse(rev_bar != 0, (rev - rev_l)/rev_bar, 0)]
-  # product_data[, rev_reallocation := abs(ifelse(rev_bar != 0, abs(rev - rev_l)/rev_bar, 0))]
   # #Juli?n: Change gap years rev_growth=0, rev_reallocation=0 and rev_bar=0
   product_data[, rev_growth := ifelse(gap == 1, 0, rev_growth)]
   product_data[, rev_reallocation := ifelse(gap == 1, 0, rev_reallocation)]
@@ -336,7 +186,6 @@ for (cpa_or_pf in product_vars) {
 
   ## generate product status variables
   ## Juli?n: Add paused status
-
   product_data[, active_year := ifelse(active, year, NA)]
   product_data[, `:=`(
     first_introduction = year == min(active_year, na.rm = T),
@@ -352,14 +201,6 @@ for (cpa_or_pf in product_vars) {
   product_data = product_data %>%
     arrange(firmid, cpa_or_pf, year) %>%
     select("firmid", "year", vars_to_select, everything())
-
-  # make_summary_stats(product_data, c("rev", "rev_l", "gap", "HHI", "rev_growth"), "year", "product_data2_year")
-  # description("product_data2_DEFind.xlsx",
-  #             "Summary statistics on revenue and within-firm concentration using PRODCOM data excluding utilities, per NACE 2 digit codes. \n")
-
-  # Up to here filter_indicator would be "10_digit_all_prodfra_exclude_industries", but this is not actually 10_digit, this is 6_digit
-  # prodfra_or_pcc8<-"cpa"
-  # parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
   write_parquet(product_data, paste0("2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
 
   print(paste0("Saved 2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
