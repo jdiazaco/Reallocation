@@ -4,17 +4,24 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 #5) prepare firm level decompositions of product data ------------------------------------
 product_data <- read_parquet(paste0("2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
 
-##5.1) calculate extensive margin product growth/reallocation rate -------------------
-firm_data_ex = product_data[, .(products_l = sum(active_l),
-                                products = sum(active),
-                                prod_added = sum(active & !active_l),
-                                prod_removed = sum(!active & active_l)),
-                            by = .(firmid, year)]
-firm_data_ex[, `:=`(entrance_growth = prod_added / products,
-                    exit_growth = prod_removed / products_l,
-                    entrance_share = products/sum(products),
-                    exit_share = products_l / sum(products_l)),
-             by =year]
+## 5.1) calculate extensive margin product growth/reallocation rate -------------------
+firm_data_ex = product_data[, .(
+  products_l = sum(active_l),
+  products = sum(active),
+  prod_added = sum(active & !active_l),
+  prod_removed = sum(!active & active_l)
+),
+by = .(firmid, year, consolidated_birth_year, economic_death_year, status)
+]
+
+firm_data_ex[, `:=`(
+  entrance_growth = prod_added / products,
+  exit_growth = prod_removed / products_l,
+  entrance_share = products / sum(products),
+  exit_share = products_l / sum(products_l)
+),
+by = year
+]
 
 firm_data_ex[status == 'born', exit_growth:=0]
 firm_data_ex[status == 'died', entrance_growth:=0]
@@ -24,12 +31,12 @@ firm_data_ex[, `:=`(entrance_growth_weighted  = entrance_growth * entrance_share
 
 vars<-c("entrance", "exit")
 for (var in vars){
-  firm_data_ex[[paste0(var, "_reallocation")]]<-firm_data_ex[[paste0(var, "_growth")]]
-  firm_data_ex[[paste0(var, "_reallocation_weighted")]]<-firm_data_ex[[paste0(var, "_growth_weighted")]]
+  firm_data_ex[[paste0(var, "_reallocation")]] <- firm_data_ex[[paste0(var, "_growth")]]
+  firm_data_ex[[paste0(var, "_reallocation_weighted")]] <- firm_data_ex[[paste0(var, "_growth_weighted")]]
 }
 
-firm_data_ex = firm_data_ex %>% select(-c('products_l', 'products', 'prod_added', 'prod_removed'))
-saveRDS(firm_data_ex, 'firm_level_ex_margin.rds')
+# firm_data_ex = firm_data_ex %>% select(-c('products_l', 'products', 'prod_added', 'prod_removed'))
+# saveRDS(firm_data_ex, 'firm_level_ex_margin.rds')
 
 # make_summary_stats(firm_data_ex, c("entrance_growth", "exit_growth", "entrance_share", "exit_share"), "year", "ex_margin_year.xls")
 # description("ex_margin_year.csv", "Summary statistics for average entrance growth, exit growth, entrance share and exit share per year.\n")
@@ -41,7 +48,7 @@ product_data = product_data %>% select(firmid, prodfra_plus, year, rev_l, rev, r
                                        rev_reallocation, within_firm_rev_share, everything())
 firm_data_in = product_data[, .(rev=sum(rev),
                                 rev_l=sum(rev_l),
-                                rev_bar = .5*(sum(rev_bar)),#Why times 0.5?
+                                rev_bar = 0.5 * ( sum( rev_bar ) ), # Why times 0.5? 
                                 rev_reallocation = sum(rev_reallocation*within_firm_rev_share)),
                             by = .(firmid, year,birth_year, death_year)] #Here aggregating by firm and year, deleting product-lines.
 firm_data_in[, rev_share :=  rev_bar /sum(rev_bar), by = year] #Here aggregating by year in a new variable, getting the revenue share for the whole economy, but not collapsing the firm-year information.

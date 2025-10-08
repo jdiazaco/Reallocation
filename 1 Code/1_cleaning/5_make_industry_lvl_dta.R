@@ -1,7 +1,6 @@
 division_levels = as.data.table(read_excel("C:/Users/Public/1. Microprod/Reallocation_work/2 Data/product_harmonization_output/division_to_tech_level.xlsx", 
                                            sheet = "division_to_tech_level"))
 
-
 firm_yr_lvl_br_dta[, `:=`(
   rank_within_industry = frank(nq_bar, ties.method = "average", na.last = "keep"),
   n_firms_in_industry  = .N
