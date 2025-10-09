@@ -15,12 +15,9 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     rename(
       economic_birth_year = birth_year, economic_death_year = death_year,
       legal_birth_year = firm_birth_year
-    )  %>%
+    ) %>%
     .[, `:=`(economic_birth_year = min(year), economic_death_year = max(year)), by = firmid] %>%
-    .[, `:=`(
-      NACE_BR = str_pad(NACE_BR, 4, side = "left", pad = "0"),
-      NACE_2d = substr(NACE_BR, 1, 2)
-  )]
+    .[, NACE_2d_BR := substr(NACE_BR, 1, 2)]
 
 } else {
   ## import BR data
@@ -81,13 +78,12 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   rm(sbs_data, br_data, bs_data)
   gc()
 
-  setorder(firm_yr_lvl_br_dta, firmid, year)
-
   # Adjust NACE variables
+  setorder(firm_yr_lvl_br_dta, firmid, year)
   firm_yr_lvl_br_dta[, `:=`(NACE_BR = zoo::na.locf(NACE_BR, na.rm = F)), by = firmid]
   firm_yr_lvl_br_dta[, `:=`(
     NACE_BR = str_pad(NACE_BR, 4, side = "left", pad = "0"),
-    NACE_2d = substr(NACE_BR, 1, 2)
+    NACE_2d_BR = substr(NACE_BR, 1, 2)
   )]
 
   ## define active firms as those with post employees;
@@ -98,13 +94,6 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     economic_birth_year = min(year),
     economic_death_year = max(year)
   ), by = firmid]
-
-  # ## Q: CHECK WHETHER THIS IS AN ISSUE (IN CONCORDANCE WITH AGE VARIABLE DEFINITION BELOW)
-  # ## A: I THINK THIS IS AN ISSUE, BECAUSE 1994 FIRMS WILL NOT HAVE A BIRTH YEAR, BUT THEY ARE CLEARLY OLD AND
-  # ## IF HAVE LASTED THIS LONG ARE PROBABLY IMPORTANT. BUT THEN I REALIZED I DO DEAL WITH THIS BELOW,
-  # ## SO I AM JUST BRINGING THAT CODE UP
-  # firm_yr_lvl_br_dta[economic_birth_year == start, economic_birth_year := NA]
-  # firm_yr_lvl_br_dta[economic_death_year == end, economic_death_year := NA]
 
   # Juli?n: Create variable with the year the firm was created according to br
   source(paste0(tools_dir, "firm_birth_year_creator.R")) # CAUTION: This can take a long time
@@ -123,7 +112,8 @@ hist(firm_yr_lvl_br_dta$consolidated_birth_year, breaks = 121)
 firm_yr_lvl_br_dta[, firm_age := year - consolidated_birth_year]
 
 firm_yr_lvl_br_dta[, young := ifelse(is.na(firm_age), NA, ifelse(firm_age <= 5, 1, 0))]
-firm_yr_lvl_br_dta <- deflate(firm_yr_lvl_br_dta, "NACE_BR", c("nq", "capital", "turnover", "raw_materials", "labor_cost"), 2009)
+firm_yr_lvl_br_dta <- deflate(firm_yr_lvl_br_dta, "NACE_BR", c("nq", "capital", "turnover", "raw_materials", "labor_cost"), 2009) %>%
+  rename(DEFind_BR = DEFind)
 
 share_capital_costs <- 0.08
 firm_yr_lvl_br_dta[, `:=`(sum_costs = (labor_cost + (capital * share_capital_costs) + raw_materials))] %>%
@@ -142,7 +132,7 @@ firm_yr_lvl_br_dta <- growth_creator(
   data = firm_yr_lvl_br_dta,
   normal_cols = normal_cols,
   n_lag = 1,
-  by_vars = c("firmid", "year", "NACE_BR", "NACE_2d", "DEFind"),
+  by_vars = c("firmid", "year", "NACE_BR", "NACE_2d_BR", "DEFind_BR"),
   create_born_died = T
 )
 
@@ -263,7 +253,7 @@ setorder(firm_yr_lvl_br_dta, NACE_BR, year, rank_within_industry)
 # firm_yr_lvl_br_dta <- outliers_remove(firm_yr_lvl_br_dta, 0.01)
 
 # Juli?n: Only firmid, year, nace information
-NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d", "DEFind")]
+NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d_BR", "DEFind_BR")]
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")

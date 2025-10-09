@@ -15,10 +15,10 @@ parameters(prodfra_or_pcc8, only_prodfra_in_prodcom)
 
 ## import supplementary data
 harmonized_prodfra = fread(paste0("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/2 Data/product_harmonization_output/harmonized codes/prodfra_harmonized_2009to2023_", prodfra_or_pcc8, ".csv"))
-active_firm_list = readRDS("active_firm_list.rds")
-birth_death = readRDS("firm_birth_death.rds")
-NACE_BR_data <- readRDS("NACE_BR_data.rds")
-nace_DEFind <- fread("nace_DEFind.conc", colClasses = c("character"))
+active_firm_list = read_parquet("1a_active_firm_list.parquet")
+birth_death = read_parquet("1a_firm_birth_death.parquet")
+NACE_BR_data <- read_parquet("Ancillary datasets/NACE_BR_data.parquet")
+# nace_DEFind <- fread("nace_DEFind.conc", colClasses = c("character"))
 
 #Juli?n: Pc8_entry_year
 PC8_entry_year <- fread('PC8_years_entry/PC8_prodfra_years_entry.csv', select=c("codes", "code_entry_year"))
@@ -96,8 +96,10 @@ product_data[, `:=`(
   NACE_2d_pf = substr(prodfra_plus, 1, 2)
 )]
 
-# Bring in DEFind information based on NACE_4d_pf
-product_data <- merge(product_data, nace_DEFind, by.x = "NACE_4d_pf", by.y = "nace", all.x = T) %>% select(firmid, year, cpa_or_pf, rev, everything())
+# # Bring in DEFind information based on NACE_4d_pf
+# product_data <- merge(product_data, nace_DEFind, by.x = "NACE_4d_pf", by.y = "nace", all.x = T) %>%
+#   select(firmid, year, cpa_or_pf, rev, everything()) %>%
+#   rename(DEFind_pf = DEFind)
 
 
 setcolorder(product_data, c(
@@ -130,39 +132,45 @@ for (cpa_or_pf in product_vars) {
   base_vars <- c("firmid", "year", cpa_or_pf, "active")
   vars_to_select <- unique(c(base_vars, vars_to_keep, "rev", "sold_q"))
 
+  # Deflate prodcom revenue data using industry deflators
+  product_data <- deflate(product_data, "NACE_4d_pf", "rev", start) %>%
+    rename(DEFind_pf = DEFind)
+
   # Aggregate revenue and quantities sold by product category at the specified aggregation level
   product_data <- product_data[, .(
     rev = sum(rev, na.rm = TRUE),
     sold_q = sum(sold_q, na.rm = TRUE)
-  ), by = c(base_vars, vars_to_keep)]
+  ), by = c("DEFind_pf", base_vars, vars_to_keep)]
+
+
+  product_data <- growth_creator(
+    data = product_data,
+    normal_cols = c("rev", "active", "sold_q"),
+    n_lag = 1,
+    by_vars = c("firmid", vars_to_keep, "DEFind_pf", cpa_or_pf, "year"),
+    create_born_died = TRUE,
+    data_type = "survey"
+  )
+  
+  # Remove variables that start with "active" or "sold_q", but leave "active", "active_l", "sold_q" and "sold_q_l"
+  product_data <- product_data %>% select(-starts_with("active"), -starts_with("sold_q"), active, active_l, sold_q, sold_q_l)
 
   # Bring in BR NACE info to remove excluded sectors both at firm and product level
   product_data <- merge(product_data, NACE_BR_data, by = c("firmid", "year"), all.x = T)
 
   # Exclude firms and product lines in industries if the parameter is set above
   product_data <- product_data %>% filter(
-    !(substr(NACE_2d_pf, 1, 2) %in% ind_to_exclude),
-    !(NACE_2d %in% ind_to_exclude)
-  )
-
-  # Deflate prodcom revenue data using industry deflators
-  # product_data <- deflate(product_data, "NACE", "rev", start)
-
-  product_data <- growth_creator(
-    data = product_data,
-    normal_cols = c("rev", "active", "sold_q"),
-    n_lag = 1,
-    by_vars = c("firmid", "NACE_BR", "NACE_2d", vars_to_keep, cpa_or_pf, "year"),
-    create_born_died = TRUE,
-    data_type = "survey"
+    !(NACE_2d_pf %in% ind_to_exclude),
+    !(NACE_2d_BR %in% ind_to_exclude)
   )
 
   product_data[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
 
-  # Remove variables that start with "active" or "sold_q", but leave "active", "active_l", "sold_q" and "sold_q_l"
-  product_data <- product_data %>% select(-starts_with("active"), -starts_with("sold_q"), active, active_l, sold_q, sold_q_l)
 
   product_data <- product_data[order(firmid, get(cpa_or_pf), year)]
+  product_data[, `:=`(first_year=min(year, na.rm = TRUE),
+                      last_year=max(active_year, na.rm = TRUE)),
+                 by=firmid]
   product_data[, forward_year := shift(year, type = "lead"), by = .(firmid, get(cpa_or_pf))]
   product_data[, lag_year := shift(year, type = "lag"), by = .(firmid, get(cpa_or_pf))]
   product_data[, gap := fifelse(
@@ -200,7 +208,11 @@ for (cpa_or_pf in product_vars) {
   ## export the data
   product_data = product_data %>%
     arrange(firmid, cpa_or_pf, year) %>%
-    select("firmid", "year", vars_to_select, everything())
+    select(
+      "firmid", "year", "DEFind_BR", "NACE_2d_BR", "NACE_BR", "DEFind_pf", setdiff(vars_to_select, c("active")), "status", "gap",
+    "first_year", "last_year", "first_introduction", "discontinued",
+    "reintroduced", "paused", "incumbent", everything()
+    )
   write_parquet(product_data, paste0("2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
 
   print(paste0("Saved 2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))

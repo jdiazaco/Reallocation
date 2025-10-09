@@ -70,6 +70,7 @@ source(paste0(tools_dir, "age_data_filter.R"))
 source(paste0(tools_dir, "create_formulas.R"))
 source(paste0(tools_dir, "regression_innovation_growth.R"))
 source(paste0(tools_dir, "remove_special_chars.R"))
+source(paste0(tools_dir, "core_switch_product.R"))
 
 
 
@@ -100,18 +101,19 @@ source(paste0(code_dir, ".lintr.R"))
 lint(paste0(code_dir, ".lintr.R"))
 
 # Define level of aggregation for product level data
-cpa_or_pf<-"cpa" #Options: cpa, prodfra_plus, "prodfra_plus", "prodcom", "cpa", "NACE_4d_pf", "NACE_2d_pf"
-if (cpa_or_pf == "cpa") {
-  ext <- "_cpa"
-  digits <- c(0, 1, 2, 4, 6)
-  exit_digit <- "exit_6"
-} else {
-  if (cpa_or_pf == "prodfra_plus") {
-    ext <- ""
-  }
-  digits <- c(0, 1, 2, 4, 6, 8, 10)
-  exit_digit <- "exit_10"
-}
+cpa_or_pf <- "cpa" # Options: "cpa", "prodfra_plus", "prodcom", "NACE_4d_pf", "NACE_2d_pf"
+agg_levels <- list(
+  prodfra_plus  = list(ext = "_prodfra_plus",digits = c(0,1,2,4,6,8,10), exit_digit = "exit_10"),
+  prodcom       = list(ext = "_prodcom",    digits = c(0,1,2,4,6,8),     exit_digit = "exit_8"),
+  cpa           = list(ext = "_cpa",        digits = c(0,1,2,4,6),       exit_digit = "exit_6"),
+  NACE_4d_pf    = list(ext = "_nace4d_pf",  digits = c(0,1,2,4),         exit_digit = "exit_4"),
+  NACE_2d_pf    = list(ext = "_nace2d_pf",  digits = c(0,1,2),           exit_digit = "exit_2")
+)
+
+if (!cpa_or_pf %in% names(agg_levels)) stop("Unknown cpa_or_pf value")
+ext        <- agg_levels[[cpa_or_pf]]$ext
+digits     <- agg_levels[[cpa_or_pf]]$digits
+exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
 
 # These are oil manufacturing, public utilities, water supply, sewerage, waste management and remediation activities,
 # and activities of households as employers; undifferentiated goods- and services-producing activities of households for own use; activities of extraterritorial organizations and bodies
