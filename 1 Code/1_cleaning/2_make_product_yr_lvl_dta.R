@@ -166,7 +166,7 @@ for (cpa_or_pf in product_vars) {
 
   product_data[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
 
-
+  product_data[, active_year := ifelse(active, year, NA)]
   product_data <- product_data[order(firmid, get(cpa_or_pf), year)]
   product_data[, `:=`(first_year=min(year, na.rm = TRUE),
                       last_year=max(active_year, na.rm = TRUE)),
@@ -194,7 +194,6 @@ for (cpa_or_pf in product_vars) {
 
   ## generate product status variables
   ## Juli?n: Add paused status
-  product_data[, active_year := ifelse(active, year, NA)]
   product_data[, `:=`(
     first_introduction = year == min(active_year, na.rm = T),
     discontinued = year > max(active_year, na.rm = T) & !active
@@ -210,10 +209,12 @@ for (cpa_or_pf in product_vars) {
     arrange(firmid, cpa_or_pf, year) %>%
     select(
       "firmid", "year", "DEFind_BR", "NACE_2d_BR", "NACE_BR", "DEFind_pf", setdiff(vars_to_select, c("active")), "status", "gap",
-    "first_year", "last_year", "first_introduction", "discontinued",
-    "reintroduced", "paused", "incumbent", everything()
+      "first_year", "last_year", "first_introduction", "discontinued",
+      "reintroduced", "paused", "incumbent", everything()
     )
-  write_parquet(product_data, paste0("2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
+  
+  dir.create(paste0("product_data/", cpa_or_pf), showWarnings = FALSE, recursive = TRUE)
+  write_parquet(product_data, paste0("product_data/", cpa_or_pf, "/2_product_yr_lvl_dta.parquet"))
 
-  print(paste0("Saved 2_product_yr_lvl_dta_", cpa_or_pf, ".parquet"))
+  print(paste0("Saved product_data/", cpa_or_pf, "/2_product_yr_lvl_dta.parquet"))
 }
