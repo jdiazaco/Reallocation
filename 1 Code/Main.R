@@ -14,7 +14,7 @@ packages = c('data.table', 'haven', 'readxl', 'openxlsx','stringr', 'readr', 'dp
              'ggplot2', 'tidyverse', 'rstudioapi', 'zoo', 'reshape2',
              'patchwork', 'latex2exp', "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom", "fixest",
              "xtable", "arrow", "tools", "marginaleffects",
-             "AER", "fixest", "lfe", "lintr")
+             "AER", "fixest", "lfe", "lintr", "httr", "jsonlite")
 installed_packages <- packages %in% rownames(installed.packages())
 if (any(installed_packages == FALSE)) {
   install.packages(packages[!installed_packages])
@@ -71,6 +71,7 @@ source(paste0(tools_dir, "create_formulas.R"))
 source(paste0(tools_dir, "regression_innovation_growth.R"))
 source(paste0(tools_dir, "remove_special_chars.R"))
 source(paste0(tools_dir, "core_switch_product.R"))
+source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
 
 
 

@@ -89,7 +89,7 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   ## define active firms as those with post employees;
   ## define firm birth/death as first/last time
   ## with positive employees in the data
-  firm_yr_lvl_br_dta = firm_yr_lvl_br_dta[empl > filter_min_n_employees]
+  firm_yr_lvl_br_dta = firm_yr_lvl_br_dta[empl >= filter_min_n_employees]
   firm_yr_lvl_br_dta[, `:=`(
     economic_birth_year = min(year),
     economic_death_year = max(year)
@@ -258,4 +258,19 @@ NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d_BR"
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
 write_parquet(NACE_BR_data, 'Ancillary datasets/NACE_BR_data.parquet')
+
+# Bring in NUTS information
+# nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
+# nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+
+# # Clean it and merge it to product_summary
+#  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
+#  nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+#  nuts<-nuts[, c("firmid", "year", "nuts3")]
+#  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
+#  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
+#  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
+#  nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
+#  product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
+
 

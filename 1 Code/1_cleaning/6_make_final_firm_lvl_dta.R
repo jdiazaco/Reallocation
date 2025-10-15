@@ -119,3 +119,30 @@ firm_yr_lvl_br_dta_prodcom_firms <- outliers_remove(firm_yr_lvl_br_dta_prodcom_f
 save_parquet(firm_yr_lvl_br_dta, "firm_yr_lvl_br_dta.parquet")
 save_parquet(firm_yr_lvl_br_dta_prodcom_firms, "firm_yr_lvl_br_dta_prodcom_firms.parquet")
 # save_parquet(firm_yr_lvl_br_dta_prodcom_sectors, 'firm_yr_lvl_br_dta_prodcom_sectors.parquet')
+
+
+# Adjust windows for left-censoring
+product_summary[, pat_filings_window_psum := fifelse(pat_filings_window_psum == 0 & pat_filings_window == 1 & !is.na(pat_filings_window), 1, pat_filings_window_psum)]
+product_summary[, pat_families_window_psum := fifelse(pat_families_window_psum == 0 & pat_families_window == 1 & !is.na(pat_families_window), 1, pat_families_window_psum)]
+
+
+.[, `:=`(
+  log_firm_age = log(firm_age),
+  log_empl_bar = log(empl_bar)
+)] %>%
+  .[, product_innovative_patent_window := net_product_creat_window * patent_window] %>% # Interaction between product creation and patenting
+  .[, product_strategic_patent_window := (1 - net_product_creat_window) * patent_window] # Interaction between lack of product creation and patenting
+
+# Create revenue share growth variables
+rev_share_growth <- growth_creator(patenting_products, c("within_economy_rev_share_BR", "within_industry_rev_share"), 1) %>%
+  select(
+    firmid, year,
+    within_economy_rev_share_BR_growth, within_economy_rev_share_BR_l,
+    within_industry_rev_share_growth, within_industry_rev_share_l, within_industry_rev_share_bar
+  )
+
+# Merge all data
+patenting_products <- merge(patenting_products, rev_share_growth, by = c("firmid", "year"), all.x = T) %>%
+  merge(br_industry_HHI, by = c("NACE_BR", "year"), all.x = T)
+rm(rev_share_growth, br_industry_HHI, ipcr_cumulative); gc()
+

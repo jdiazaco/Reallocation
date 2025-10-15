@@ -217,6 +217,20 @@ agg_product_data[, `:=`(
     rev_bar = NULL
 )]
 
+
+
+
 # Export firm-level product data
 write_parquet(agg_product_data, paste0("product_data/", cpa_or_pf, "/3_firm_lvl_product_dta.parquet"))
+
+# Adjust product creation and destruction measures as net variables (new-old)
+product_summary[, `:=`(net_product_change=new_products-destroyed_products)]
+product_summary[, `:=`(net_product_creat=ifelse(net_product_change>0, 1, 0),
+                       net_product_destr=ifelse(net_product_change<0, 1, 0))]
+
+#' Create windows for product creation and destruction variables
+#' emember that our product data is left censored, so time windows that go to years before our first data point should be NAs (na_rm=F, )
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_creat", window_length, 0, "net_product_creat_window", na_rm=F) 
+product_summary<-window_var_cretor(product_summary, "firmid", "year", "net_product_destr", window_length, 0, "net_product_destr_window", na_rm=F)
+
 
