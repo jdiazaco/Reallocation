@@ -9,8 +9,6 @@ ipc_info_folder <- "patent_data/ipc_information"
 # 1) INPI patent data cleaning ------------------------------------------------------
 
 inpi_patent_records <- fread("G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/2 Data/patent_data/deposants-des-brevets_clean2.csv")
-
-
 # List all CSV files in the folder
 csv_files <- list.files(
     patentsight_inpi_folder,
@@ -54,18 +52,19 @@ patents_per_family <- patents_deposants[, .(n_distinct_control1 = uniqueN(contro
 # patents_deposants <- merge(patents_deposants, patents_per_family, by = "patent_family", all.x = TRUE)
 
 # Create summary statistics of n_distict_control1 and plot histogram
-ggplot(patents_per_family, aes(x = n_distinct_control1)) +
-  geom_histogram(binwidth = 1, fill = "blue", color = "black") +
+ggplot(patents_per_family, aes(x = asinh(n_distinct_control1))) +
+  geom_histogram( fill = "blue", color = "black") +
   scale_x_continuous(breaks = seq(1, max(patents_per_family$n_distinct_control1, na.rm = TRUE), by = 1)) +
   labs(title = "Distribution of Patent Records per Patent Family",
-       x = "Number of Patent Recors per Patent Family",
+        subtitle = "INPI sample",
+       x = "log Number of Patent Records per Patent Family",
        y = "Frequency") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Rotate x axis labels
   scale_x_continuous(breaks = seq(0, max(patents_per_family$n_distinct_control1, na.rm = TRUE), by = 10)) +  
   theme_minimal()
 ggsave("patent_data/patents_per_family_histogram_inpi.png", width = 10, height = 6)
 
-summary_stats <- patents_per_family_alex[, .(
+summary_stats <- patents_per_family[, .(
   mean = mean(n_distinct_control1, na.rm = TRUE),
   median = median(n_distinct_control1, na.rm = TRUE),
   sd = sd(n_distinct_control1, na.rm = TRUE),
@@ -75,7 +74,7 @@ summary_stats <- patents_per_family_alex[, .(
 )]
 
 #and export well-formatted for publication in Excel format
-writexl::write_xlsx(summary_stats, "patent_data/patents_per_family_summary_stats_alex_inpi.xlsx")
+writexl::write_xlsx(summary_stats, "patent_data/patents_per_family_summary_stats_inpi.xlsx")
 
 # Clean column names
 setnames(patents_deposants, tolower(gsub(" ", "_", names(patents_deposants))))
@@ -165,9 +164,12 @@ alex_patents_lexis_nexis <- alex_patents_lexis_nexis[!is.na(control1)] # Keep on
 
 write_parquet(alex_patents_lexis_nexis, "patent_data/b_alex_patents_lexis_nexis.parquet", compression = "snappy")
 
-## Plots Alex  ---------------
 
-patents_per_family_alex <- alex_patents_lexis_nexis[, .(n_distinct_control1 = uniqueN(control1)), by = .(`Patent Family`, siren)][!is.na(`Patent Family`)]
+## Plots Alex ----------------------------------------------------------
+
+alex_patents_lexis_nexis <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet")
+
+patents_per_family_alex <- alex_patents_lexis_nexis[, .(n_distinct_control1 = uniqueN(control1)), by = .(patent_family, siren)][!is.na(patent_family)]
 
 ggplot(patents_per_family_alex, aes(x = asinh(n_distinct_control1))) +
   geom_histogram(fill = "blue", color = "black") +
@@ -194,6 +196,11 @@ summary_stats <- patents_per_family_alex[, .(
 
 #and export well-formatted for publication in Excel format
 writexl::write_xlsx(summary_stats, "patent_data/patents_per_family_summary_stats_alex.xlsx")
+
+# Find records in the alex dataset with same title and with the same siren but different patent family
+duplicate_titles <- alex_patents_lexis_nexis[!is.na(title.x) & !is.na(patent_family), .N, by = .(title.x, siren)][N > 1, title.x]
+duplicate_records <- alex_patents_lexis_nexis[title.x %in% duplicate_titles, .(title.x, patent_family, control1, siren)]
+  
 
 # Summary stats on the overlap between the two datasets ---------------------------------------------------
 
@@ -229,6 +236,10 @@ summary_overlap <- data.table(
   percent_inpi_in_alex = percent_inpi_in_alex,
   percent_alex_in_inpi = percent_alex_in_inpi
 )
+
+#and export well-formatted for publication in Excel format
+writexl::write_xlsx(summary_overlap, "patent_data/summary_stats_overlap_inpi_alex.xlsx")
+
 # 3) Bring together and clean patent data -------------
 
 # Create patent families per source --------------------

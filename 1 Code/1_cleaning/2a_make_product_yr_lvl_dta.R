@@ -18,20 +18,21 @@ harmonized_prodfra = fread(paste0("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Realloca
 active_firm_list = read_parquet("1a_active_firm_list.parquet")
 birth_death = read_parquet("1a_firm_birth_death.parquet")
 NACE_BR_data <- read_parquet("Ancillary datasets/NACE_BR_data.parquet")
+firmid_keys<-fread("firm_lists/firmid_keys.csv")
 # nace_DEFind <- fread("nace_DEFind.conc", colClasses = c("character"))
 
 #Juli?n: Pc8_entry_year
 PC8_entry_year <- fread('PC8_years_entry/PC8_prodfra_years_entry.csv', select=c("codes", "code_entry_year"))
-unit_collapsed <- fread("~/Reallocation/6 Publish/1 Code/Ancillary datasets/unit_collapsed.csv")
+unit_collapsed <- fread("Ancillary datasets/unit_collapsed.csv")
 unit_collapsed_M2<-unit_collapsed %>% mutate(unit_obv="M2")
 unit_collapsed<-unique(rbind(unit_collapsed, unit_collapsed_M2)); rm(unit_collapsed_M2);gc()
 
 ## import the prodcom data + harmonize product codes 
 start = 2009
-end = 2023
+end = 2022
 
 product_data = rbindlist(lapply(c(start:end),function(yr){
-  # yr<-2022
+  # yr<-2010
   print(yr)
   # import product data 
   # filepath = paste0(raw_dir,'prodcom/prodcom',yr,'.csv')
@@ -39,7 +40,9 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   dta_temp = fread(filepath)
   dta_temp[, firmid := as.character(firmid)]
   dta_temp[, pcc8 := as.character(pcc8)]
-  dta_temp$firmid<-str_pad(dta_temp$firmid, width = 9, side="left", pad="0")
+  dta_temp$firmid_char<-str_pad(dta_temp$firmid, width = 9, side="left", pad="0")
+  dta_temp[, firmid:=NULL]
+  dta_temp <- merge(dta_temp, firmid_keys, by="firmid_char", all.x=T) 
   
   #Juli?n: Replace NAs with 0s
   vars<-c("rev", "prod_q", "sold_q")
@@ -51,11 +54,13 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   
   #keep product values that aren't dropped in harmonization
   prodfra_var = paste0('prodfra_',yr)
-  prodfra_codes =  unique(harmonized_prodfra %>% select(prodfra_var,prodfra_plus) %>% filter(!is.na(prodfra_var)))
+  prodfra_codes =  unique(harmonized_prodfra %>% select(prodfra_var,prodfra_plus) %>% filter(!is.na(get(prodfra_var))))
   dta_temp = merge(dta_temp, prodfra_codes,by.x = prodfra_or_pcc8, by.y = prodfra_var)
   
-  #keep firms that employ labor
-  dta_temp = merge(dta_temp, active_firm_list, by = c('year','firmid'))
+  #keep firms that employ labor, except if the latest prodcom available exceeds FARE/FICUS coverage
+  if(yr<=br_end){
+    dta_temp = merge(dta_temp, active_firm_list, by = c('year','firmid', 'firmid_char'))
+  }
   
   # define active as positive rev or quantities, keep only active products
   dta_temp = dta_temp[(rev + sold_q + prod_q)>0]
@@ -86,7 +91,7 @@ product_data[, sold_q:=sold_q*factor]
 
 # # Bring in product_data
 # # product_data <- readRDS(paste0("product_data_", filter_indicator, "_.RDS"))
-product_data <- setDT(readRDS(paste0("product_data_10_digit_all_prodfra_.RDS")))
+# product_data <- setDT(readRDS(paste0("product_data_10_digit_all_prodfra_.RDS")))
 
 # Create product codes at different aggregation levels
 product_data[, `:=`(
@@ -213,8 +218,8 @@ for (cpa_or_pf in product_vars) {
       "reintroduced", "paused", "incumbent", everything()
     )
   
-  dir.create(paste0("product_data/", cpa_or_pf), showWarnings = FALSE, recursive = TRUE)
-  write_parquet(product_data, paste0("product_data/", cpa_or_pf, "/2_product_yr_lvl_dta.parquet"))
+  dir.create(paste0("2_product_data/", cpa_or_pf), showWarnings = FALSE, recursive = TRUE)
+  write_parquet(product_data, paste0("2_product_data/", cpa_or_pf, "/2a_product_yr_lvl_dta.parquet"))
 
   print(paste0("Saved product_data/", cpa_or_pf, "/2_product_yr_lvl_dta.parquet"))
 }

@@ -72,6 +72,9 @@ source(paste0(tools_dir, "regression_innovation_growth.R"))
 source(paste0(tools_dir, "remove_special_chars.R"))
 source(paste0(tools_dir, "core_switch_product.R"))
 source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
+source(paste0(tools_dir, "create_lags.R"))
+source(paste0(tools_dir, "winsorize.R"))
+
 
 
 
@@ -95,14 +98,14 @@ only_prodfra_in_prodcom<-FALSE
 parameters(prodfra_or_pcc8, only_prodfra_in_prodcom, exclude_industries)
 
 # Set start and end years
-start<-2009
-end<-2021
+br_start<-2009
+br_end<-2022
 
 source(paste0(code_dir, ".lintr.R"))
 lint(paste0(code_dir, ".lintr.R"))
 
 # Define level of aggregation for product level data
-cpa_or_pf <- "cpa" # Options: "cpa", "prodfra_plus", "prodcom", "NACE_4d_pf", "NACE_2d_pf"
+cpa_or_pf <- "prodfra_plus" # Options: "cpa", "prodfra_plus", "prodcom", "NACE_4d_pf", "NACE_2d_pf"
 agg_levels <- list(
   prodfra_plus  = list(ext = "_prodfra_plus",digits = c(0,1,2,4,6,8,10), exit_digit = "exit_10"),
   prodcom       = list(ext = "_prodcom",    digits = c(0,1,2,4,6,8),     exit_digit = "exit_8"),

@@ -18,7 +18,7 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     ) %>%
     .[, `:=`(economic_birth_year = min(year), economic_death_year = max(year)), by = firmid] %>%
     .[, NACE_2d_BR := substr(NACE_BR, 1, 2)]
-
+  
 } else {
   ## import BR data
   br_data = rbindlist(lapply(c(start:end), function(yr) {
@@ -32,8 +32,7 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
       rename(lfo = LEGAL) %>%
       select(firmid, year, empl, NACE_BR, Start_Ent)
   }), fill = T)
-
-
+  
   ## import SBS data
   interest_vars = c("ENT_ID", "year", "SBS_12110")
   sbs_data = rbindlist(lapply(c(start:end), function(yr) {
@@ -48,7 +47,7 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   }), use.names = T, fill = T)
   sbs_data = sbs_data %>% select(interest_vars)
   colnames(sbs_data) = c("firmid", "year", "nq")
-
+  
   ## Juli?n: import BS data to get capital measures
   interest_vars = c("ENT_ID", "year", "capital", "turnover", "raw_materials", "labor_cost")
   bs_data = rbindlist(lapply(c(start:end), function(yr) {
@@ -63,29 +62,37 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   }), use.names = T, fill = T)
   bs_data = bs_data %>% select(interest_vars)
   colnames(bs_data) = c("firmid", "year", "capital", "turnover", "raw_materials", "labor_cost")
-
+  
   # There are some firmid codes with less than 9-digits that are 9-digit codes in the other database
   # This happens because they start with 0 in the other database
   # Here I add an initial 0 to all firmids that have less than 9 digits
-
-  br_data$firmid <- str_pad(br_data$firmid, width = 9, side = "left", pad = "0")
-  bs_data$firmid <- str_pad(bs_data$firmid, width = 9, side = "left", pad = "0")
-  sbs_data$firmid <- str_pad(sbs_data$firmid, width = 9, side = "left", pad = "0")
-
+  
+  
+  br_data$firmid_char <- str_pad(br_data$firmid, width = 9, side = "left", pad = "0")
+  bs_data$firmid_char <- str_pad(bs_data$firmid, width = 9, side = "left", pad = "0")
+  sbs_data$firmid_char <- str_pad(sbs_data$firmid, width = 9, side = "left", pad = "0")
+  
+  firmid_keys <- data.table(firmid_char= c(unique(br_data$firmid_char),
+                                           unique(bs_data$firmid_char),
+                                           unique(bs_data$firmid_char)))
+  
+  firmid_keys <- unique(firmid_keys) %>% arrange(firmid_char, desc=T) %>%  .[, firmid:=.I]
+  fwrite(firmid_keys, "firm_lists/firmid_keys.csv")
+  
+  br_data[, firmid:=NULL]
+  bs_data[, firmid:=NULL]
+  sbs_data[, firmid:=NULL]
+  
+  br_data <- merge(br_data, firmid_keys, by=c("firmid_char"), all.x=T)
+  bs_data <- merge(bs_data, firmid_keys, by=c("firmid_char"), all.x=T)
+  sbs_data <- merge(sbs_data, firmid_keys, by=c("firmid_char"), all.x=T)
+  
   ## merge data and remove those not in sbs / without labor
-  firm_yr_lvl_br_dta = merge(sbs_data, br_data, all.x = T)
-  firm_yr_lvl_br_dta = merge(firm_yr_lvl_br_dta, bs_data, all.x = T)
+  firm_yr_lvl_br_dta = merge(sbs_data, br_data, by=c("firmid", "firmid_char", "year"), all = T)
+  firm_yr_lvl_br_dta = merge(firm_yr_lvl_br_dta, bs_data, by=c("firmid", "firmid_char", "year"), all=T)
   rm(sbs_data, br_data, bs_data)
   gc()
-
-  # Adjust NACE variables
-  setorder(firm_yr_lvl_br_dta, firmid, year)
-  firm_yr_lvl_br_dta[, `:=`(NACE_BR = zoo::na.locf(NACE_BR, na.rm = F)), by = firmid]
-  firm_yr_lvl_br_dta[, `:=`(
-    NACE_BR = str_pad(NACE_BR, 4, side = "left", pad = "0"),
-    NACE_2d_BR = substr(NACE_BR, 1, 2)
-  )]
-
+  
   ## define active firms as those with post employees;
   ## define firm birth/death as first/last time
   ## with positive employees in the data
@@ -94,19 +101,24 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     economic_birth_year = min(year),
     economic_death_year = max(year)
   ), by = firmid]
-
+  
   # Juli?n: Create variable with the year the firm was created according to br
   source(paste0(tools_dir, "firm_birth_year_creator.R")) # CAUTION: This can take a long time
   firm_yr_lvl_br_dta$legal_birth_year <- as.integer(firm_yr_lvl_br_dta$firm_birth_year)
   firm_yr_lvl_br_dta[, firm_birth_year := NULL]
   hist(firm_yr_lvl_br_dta$legal_birth_year, breaks = 121)
+  
 }
+
+fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
+
+firm_yr_lvl_br_dta <- fread("1_temp.csv")
 
 # Create age and young indicators
 firm_yr_lvl_br_dta[, legal_birth_year := ifelse(legal_birth_year == 0, NA, legal_birth_year)]
 firm_yr_lvl_br_dta[, consolidated_birth_year := fifelse(
   economic_birth_year == start,
-  fifelse(legal_birth_year < economic_birth_year, legal_birth_year, economic_birth_year), economic_birth_year
+  fifelse(legal_birth_year < economic_birth_year & legal_birth_year>=1901, legal_birth_year, economic_birth_year), economic_birth_year
 )]
 hist(firm_yr_lvl_br_dta$consolidated_birth_year, breaks = 121)
 firm_yr_lvl_br_dta[, firm_age := year - consolidated_birth_year]
@@ -132,9 +144,19 @@ firm_yr_lvl_br_dta <- growth_creator(
   data = firm_yr_lvl_br_dta,
   normal_cols = normal_cols,
   n_lag = 1,
-  by_vars = c("firmid", "year", "NACE_BR", "NACE_2d_BR", "DEFind_BR"),
+  by_vars = c("firmid", "year"),
   create_born_died = T
 )
+print("The following should be only 1: ")
+table(firm_yr_lvl_br_dta[, .(n=.N), by=.(firmid, year)]$n)
+
+# Adjust NACE variables
+setorder(firm_yr_lvl_br_dta, firmid, year)
+firm_yr_lvl_br_dta[, `:=`(NACE_BR = zoo::na.locf(NACE_BR, na.rm = F)), by = firmid]
+firm_yr_lvl_br_dta[, `:=`(
+  NACE_BR = str_pad(NACE_BR, 4, side = "left", pad = "0"),
+  NACE_2d_BR = substr(NACE_BR, 1, 2)
+)]
 
 firm_yr_lvl_br_dta[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
 
@@ -151,19 +173,16 @@ firm_yr_lvl_br_dta[, size := case_when(
 )]
 table(firm_yr_lvl_br_dta$size, useNA = "always")
 
-# Bring in Alex's linkedin data
-linkedin = read_parquet("french_affiliated_firm_roles_collapsed_clean.parquet") %>%
-  select(-c(rcid, `__index_level_0__`)) 
-firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, linkedin, by = c("firmid", "year"), all.x = T)
-firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
-firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
+# firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta %>% rename(firmid_char=firmid) %>% 
+#   .[, firmid:=as.numeric(firmid_char)]
+
 
 # Create market share measures
 firm_yr_lvl_br_dta[, within_industry_rev_share := nq_bar / sum(nq_bar, na.rm = T),
-  by = .(NACE_BR, year)
+                   by = .(NACE_BR, year)
 ]
 firm_yr_lvl_br_dta[, within_economy_rev_share_BR := nq_bar / sum(nq_bar, na.rm = T),
-  by = .(year)
+                   by = .(year)
 ]
 
 # 1) Create size measures: rank within industry, size buckets (quartile, decile, percentile, 1000tile), leader and top_4_leaders
@@ -196,55 +215,55 @@ firm_yr_lvl_br_dta[, `:=`(
         }
       }
   ), by = .(year, NACE_BR)] %>%
-
+  
   # .[, c("rank_within_industry", "n_firms_in_industry") := NULL] %>%
   # 2) Build the categorical buckets
   #   a) young/mature x small/medium/large
   .[, age_size_bucket :=
-    fcase(
-      young == 1 & size == "small",  "young_small",
-      young == 1 & size != "small",  "young_large",
-      young == 0 & size == "small",  "mature_small",
-      young == 0 & size == "medium", "mature_medium",
-      young == 0 & size == "large",  "mature_large",
-      default = NA_character_
-    )] %>%
+      fcase(
+        young == 1 & size == "small",  "young_small",
+        young == 1 & size != "small",  "young_large",
+        young == 0 & size == "small",  "mature_small",
+        young == 0 & size == "medium", "mature_medium",
+        young == 0 & size == "large",  "mature_large",
+        default = NA_character_
+      )] %>%
   #   b) young/mature x quartile (compact construction)
   .[, age_size_quartile := ifelse(is.na(young) | is.na(size_quartile), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_q", size_quartile)
+                                  paste0(fifelse(young == 1, "young", "mature"), "_q", size_quartile)
   )] %>%
   #   c) young/mature x decile (compact construction)
   .[, age_size_decile := ifelse(is.na(young) | is.na(size_decile), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_d", size_decile)
+                                paste0(fifelse(young == 1, "young", "mature"), "_d", size_decile)
   )] %>%
   #   d) young/mature x percentile (compact construction)
   .[, age_size_percentile := ifelse(is.na(young) | is.na(size_percentile), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_p", size_percentile)
+                                    paste0(fifelse(young == 1, "young", "mature"), "_p", size_percentile)
   )] %>%
   #   e) young/mature x 1000tile (compact construction)
   .[, age_size_1000tile := ifelse(is.na(young) | is.na(size_1000tile), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_k", size_1000tile)
+                                  paste0(fifelse(young == 1, "young", "mature"), "_k", size_1000tile)
   )] %>%
   #   f) young/mature x top firm (compact construction)
   .[, age_leader := ifelse(is.na(young) | is.na(leader), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(leader == 1, "leader", "follower"))
+                           paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(leader == 1, "leader", "follower"))
   )] %>%
   #  g) young/mature x top 4 firms (compact construction)
   .[, age_top_4_leaders := ifelse(is.na(young) | is.na(top_4_leaders), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_4_leaders == 1, "top_4", "not_top_4"))
+                                  paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_4_leaders == 1, "top_4", "not_top_4"))
   )] %>%
   #  h) young/mature x top 10 firms (compact construction)
   .[, age_top_10_leaders := ifelse(is.na(young) | is.na(top_10_leaders), NA,
-    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_10_leaders == 1, "top_10", "not_top_10"))
+                                   paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_10_leaders == 1, "top_10", "not_top_10"))
   )]
 
 setorder(firm_yr_lvl_br_dta, NACE_BR, year, rank_within_industry)
-  View(firm_yr_lvl_br_dta %>% select(
-    firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
-    size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
-    leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
-    age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
-  ))
+View(firm_yr_lvl_br_dta %>% select(
+  firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
+  size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
+  leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
+  age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
+))
 
 # ## Filter by prodcom firms or sectors
 # firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[firmid %in% prodcom_firms]
@@ -255,22 +274,39 @@ setorder(firm_yr_lvl_br_dta, NACE_BR, year, rank_within_industry)
 # Juli?n: Only firmid, year, nace information
 NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d_BR", "DEFind_BR")]
 
+print("The following should be only 1: ")
+table(firm_yr_lvl_br_dta[, .(n=.N), by=.(firmid, year)]$n)
+
+# Bring in Alex's linkedin data
+linkedin = read_parquet("linkedin_data/french_affiliated_firm_roles_collapsed_clean.parquet") %>%
+  select(-c(rcid, `__index_level_0__`))  %>% rename(firmid_char=siren) %>% setDT(.) %>%
+  .[, firmid:=NULL] %>% merge(firmid_keys, by=c("firmid_char"), all.x=T) %>% .[, firmid_char:=NULL]
+firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, linkedin, by = c("firmid", "year"), all.x = T)
+firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
+firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
+
+# Bring in NUTS information
+nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
+nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+
+# # Clean it and merge it to product_summary
+nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
+nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+nuts<-nuts[, c("firmid", "year", "nuts3")]
+nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
+nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
+nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
+nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
+product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
+
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
 write_parquet(NACE_BR_data, 'Ancillary datasets/NACE_BR_data.parquet')
-
-# Bring in NUTS information
-# nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
-# nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
-
-# # Clean it and merge it to product_summary
-#  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
-#  nuts<-nuts[firmid %in% unique(product_summary$firmid)]
-#  nuts<-nuts[, c("firmid", "year", "nuts3")]
-#  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
-#  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
-#  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
-#  nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
-#  product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
-
+# 
+# firm_yr_lvl_br_dta <- read_parquet("1_firm_yr_lvl_br_dta.parquet")
+# firm_yr_lvl_br_dta[, c("firmid_char.x", "firmid_char.y"):=NULL]
+# firmid_keys<-fread("firm_lists/firmid_keys.csv")
+# 
+# firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, firmid_keys, all.x=TRUE)
+# write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
 

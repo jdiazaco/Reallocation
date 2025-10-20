@@ -2,10 +2,14 @@
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
 
 # 1) Make IPCR cumulative data ----------------------------------------------
+
+firmid_keys <- fread("firm_lists/firmid_keys.csv")
+
 {
 # a) Load patent level data------------------------------------------------
-patent_data <- read_parquet("4_patent_lvl_patent_dta.parquet")
+patent_data <- read_parquet("3_patent_lvl_patent_dta.parquet")
 setDT(patent_data)
+patent_data <- patent_data[!is.na(firmid)]
 
 # b) Expand multiple firm IDs per patent ---------------------------------------
 # patent_data[, siren_list := strsplit(siren, ",")]
@@ -52,38 +56,68 @@ cum_data <- test_expanded[
   order(firmid, filing_year),
   .(ipcr4 = list(ipcr4), NACE2 = list(NACE2)),
   by = .(firmid, filing_year)
-][
-  , `:=`(
-    ipcr_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), ipcr4, accumulate = TRUE),
-    NACE_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), NACE2, accumulate = TRUE)
-  ),
+]
+#   cum_data <- cum_data[
+#   , `:=`(
+#     ipcr_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), ipcr4, accumulate = TRUE),
+#     NACE_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), NACE2, accumulate = TRUE)
+#   ),
+#   by = firmid
+# ]
+
+cum_data <- cum_data[
+  , c("ipcr_cum", "NACE_cum") :={
+    ipcr_cum_list <- vector("list", .N)
+    NACE_cum_list <- vector("list", .N)
+    ipcr_seen<- character()
+    NACE_seen <- character()
+    for(i in seq_len(.N)){
+      ipcr_new <- ipcr4[[i]]
+      NACE_new <- NACE2[[i]]
+      if(!all(is.na(ipcr_new))) ipcr_seen <- unique(c(ipcr_seen, ipcr_new[!is.na(ipcr_new)]))
+      if(!all(is.na(NACE_new))) NACE_seen <- unique(c(NACE_seen, NACE_new[!is.na(NACE_new)]))
+      ipcr_cum_list[[i]] <- ipcr_seen
+      NACE_cum_list[[i]] <- NACE_seen
+    }
+    list(ipcr_cum_list, NACE_cum_list)
+  },
   by = firmid
-][
+]
+
+
+  cum_data <- cum_data [
   , .(firmid, filing_year, ipcr_cum, NACE_cum)
-][
+] 
+  cum_data <- cum_data[
   , `:=`(
     ipcr_cum = lapply(ipcr_cum, unique),
     NACE_cum = lapply(NACE_cum, unique),
     year = filing_year
   )
-][, `:=`(
+] 
+  cum_data <- cum_data[, `:=`(
   n_ipcr = sapply(ipcr_cum, function(x) sum(!is.na(x))),
   n_NACE = sapply(NACE_cum, function(x) sum(!is.na(x)))
 )]
 
-cum_data <- cum_data[, firmid := as.integer(.GRP), by = firmid] %>% .[, firmid := as.numeric(firmid)] 
+cum_data[, firmid_char:=str_pad(firmid, 9, side="left", pad="0")]
+cum_data[, firmid:=NULL]
+cum_data <- merge(cum_data, firmid_keys, by="firmid_char", all.x=T)
+
+# cum_data <- cum_data[, firmid := as.integer(.GRP), by = firmid] %>% .[, firmid := as.numeric(firmid)] 
 growth <- growth_creator(data=cum_data, 
                          normal_cols = c("n_NACE", "n_ipcr"), 
-                         n_lag=1)[, c("firmid", "year", "n_NACE_bar", "n_ipcr_bar", "n_NACE_growth", "n_ipcr_growth")]
-cum_data_og <- copy(cum_data)
-cum_data <- merge(cum_data, growth, by = c("firmid", "year"), all.x = T)
+                         by_vars = c("firmid_char", "year"),
+                         n_lag=1)[, c("firmid_char", "year", "n_NACE_bar", "n_ipcr_bar", "n_NACE_growth", "n_ipcr_growth")]
+# cum_data_og <- copy(cum_data)
+cum_data <- merge(cum_data, growth, by = c("firmid_char", "year"), all.x = T)
 
 # Shift forward for lag comparison
-cum_data_fwd <- copy(cum_data)[, filing_year := filing_year + 1][, c("firmid", "filing_year", "ipcr_cum", "NACE_cum")]
+cum_data_fwd <- copy(cum_data)[, filing_year := filing_year + 1][, c("firmid_char", "filing_year", "ipcr_cum", "NACE_cum")]
 setnames(cum_data_fwd, c("ipcr_cum", "NACE_cum"), c("ipcr_cum_l", "NACE_cum_l"))
 
 # Merge current and lagged cumulative data
-ipcr_cumulative <- merge(cum_data, cum_data_fwd, by = c("firmid", "filing_year"), all.x = TRUE)
+ipcr_cumulative <- merge(cum_data, cum_data_fwd, by = c("firmid_char", "filing_year"), all.x = TRUE)
 
 # g) Identify new IPCR/NACE codes per year -------------------------------------
 ipcr_cumulative[, `:=`(
@@ -101,19 +135,19 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
 # a) Load firm data and product data -----------------
 
 {
-  patent_lvl_data <- as.data.table(read_parquet("4_patent_lvl_patent_dta.parquet"))
-  ipcr_cumulative <- as.data.table(readRDS("4a_ipcr_cumulative.RDS")) %>% select(firmid, year, n_ipcr, n_NACE, n_NACE_growth, n_ipcr_growth, ipcr_creat)
+  patent_lvl_data <- as.data.table(read_parquet("3_patent_lvl_patent_dta.parquet"))
+  ipcr_cumulative <- as.data.table(readRDS("4a_ipcr_cumulative.RDS")) %>% select(firmid, firmid_char, year, n_ipcr, n_NACE, n_NACE_growth, n_ipcr_growth, ipcr_creat)
   window_length<-2
   
-  filings_per_year <- patent_lvl_data[, .(num_pat_filings = n_distinct(control1)), by = .(siren, filing_year)]
-  families_per_year <- patent_lvl_data[, .(num_pat_families = uniqueN(patent_family)), by = .(siren, filing_year)]
+  filings_per_year <- patent_lvl_data[, .(num_pat_filings = n_distinct(control1)), by = .(firmid_char, filing_year)]
+  families_per_year <- patent_lvl_data[, .(num_pat_families = uniqueN(patent_family)), by = .(firmid_char, filing_year)]
   
   # Create all combinations of firmid and year (complete panel)
-  full_panel <- CJ(firmid = unique(patent_lvl_data$siren), filing_year = max(1980, min(patent_lvl_data$filing_year)):2022)
+  full_panel <- CJ(firmid = unique(patent_lvl_data$firmid_char), filing_year = max(1980, min(patent_lvl_data$filing_year)):2022)
   
   # Merge with the original data to fill in missing years with NA
-  firm_lvl_patent_data <- merge(full_panel, filings_per_year, by.x = c("firmid", "filing_year"), by.y = c("siren", "filing_year"), all.x = TRUE)
-  firm_lvl_patent_data <- merge(firm_lvl_patent_data, families_per_year, by.x = c("firmid", "filing_year"), by.y = c("siren", "filing_year"), all.x = TRUE)
+  firm_lvl_patent_data <- merge(full_panel, filings_per_year, by.x = c("firmid", "filing_year"), by.y = c("firmid_char", "filing_year"), all.x = TRUE)
+  firm_lvl_patent_data <- merge(firm_lvl_patent_data, families_per_year, by.x = c("firmid", "filing_year"), by.y = c("firmid_char", "filing_year"), all.x = TRUE)
   
   # Order by firm and year
   setorder(firm_lvl_patent_data, firmid, filing_year)
@@ -174,6 +208,6 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
     window_var_cretor("firmid", "year", "ipcr_creat", window_length, 0, "ipcr_creat_window", na_rm = TRUE) # Create 2-year window for ipcr_creat
   
   # Save final data
-  write_rds(patenting_products, "patenting_products_firm_level.RDS")
+  write_rds(patenting_products, "4b_patenting_products_firm_level.RDS")
 }
 
