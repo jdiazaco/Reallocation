@@ -110,9 +110,9 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   
 }
 
-fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
+# fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
 
-firm_yr_lvl_br_dta <- fread("1_temp.csv")
+# firm_yr_lvl_br_dta <- fread("1_temp.csv")
 
 # Create age and young indicators
 firm_yr_lvl_br_dta[, legal_birth_year := ifelse(legal_birth_year == 0, NA, legal_birth_year)]
@@ -138,6 +138,20 @@ firm_yr_lvl_br_dta[, `:=`(sum_costs = (labor_cost + (capital * share_capital_cos
     nq_raw_materials = ifelse(raw_materials != 0, nq / raw_materials, 0)
   )]
 
+  # Calculate median cost shares by industry-year
+  cost_share_medians <- firm_yr_lvl_br_dta[, .(
+    elas_t_l = median(t_l, na.rm = TRUE),
+    elas_t_k = median(t_k, na.rm = TRUE),
+    elas_t_m = median(t_m, na.rm = TRUE)
+  ), by = .(NACE_BR, year)]
+
+  # Merge medians back to main data
+  firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, cost_share_medians, by = c("NACE_BR", "year"), all.x = TRUE)
+
+  # Estimate cost-share production function by industry-year and compute TFP residuals
+  firm_yr_lvl_br_dta[, tfpr := nq - (elas_t_l * asinh(empl) + elas_t_k * asinh(capital) + elas_t_m * asinh(raw_materials))]
+
+
 ## generate lagged variables Juli?n: add capital
 normal_cols = c("nq", "empl", "capital", "raw_materials", "labor_cost") #, "tfp"
 firm_yr_lvl_br_dta <- growth_creator(
@@ -160,10 +174,27 @@ firm_yr_lvl_br_dta[, `:=`(
 
 firm_yr_lvl_br_dta[, status := ifelse(born, "born", ifelse(died, "died", "survived"))]
 
+# Generate sector dummies
+firm_yr_lvl_br_dta[, `:=`(
+  manufacturing = !is.na(NACE_2d_BR) & substr(NACE_2d_BR, 1, 1) == 1,
+  services = !is.na(NACE_2d_BR) & substr(NACE_2d_BR, 1, 1) == 2,
+  other_sector = is.na(NACE_2d_BR) & !is.na(NACE_BR)
+)]
+
 ## generate employment buckets (I use the divisions present in the ICT data)
 breaks = c(-Inf, 10, 50, 250, Inf)
 categories = c("<10", "10-50", "50-250", "250+")
 firm_yr_lvl_br_dta[, labor_bucket := cut(empl_bar, breaks = breaks, labels = categories, right = F)]
+
+## combine employment bucket + sector
+firm_yr_lvl_br_dta[, sector_labor_bucket := ifelse(is.na(empl_bar), NA,
+    ifelse(manufacturing, paste0("manufacturing:", as.character(labor_bucket)),
+        ifelse(services, paste0("services:", labor_bucket),
+            ifelse(other_sector, paste0("other sector:", labor_bucket), NA)
+        )
+    )
+)]
+
 
 # Juli?n Create size variables for regressions
 firm_yr_lvl_br_dta[, size := case_when(
@@ -257,13 +288,13 @@ firm_yr_lvl_br_dta[, `:=`(
                                    paste0(fifelse(young == 1, "young", "mature"), "_", fifelse(top_10_leaders == 1, "top_10", "not_top_10"))
   )]
 
-setorder(firm_yr_lvl_br_dta, NACE_BR, year, rank_within_industry)
-View(firm_yr_lvl_br_dta %>% select(
-  firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
-  size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
-  leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
-  age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
-))
+# setorder(firm_yr_lvl_br_dta, NACE_BR, year, rank_within_industry)
+# View(firm_yr_lvl_br_dta %>% select(
+#   firmid, year, nq, NACE_BR, rank_within_industry, n_firms_in_industry, 
+#   size_quartile, size_decile, size_percentile, size_1000tile, leader, top_4_leaders, top_10_leaders, 
+#   leader_rev_share, top_4_leaders_rev_share, top_10_leaders_rev_share, diff_leader_vs_2nd,
+#   age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader
+# ))
 
 # ## Filter by prodcom firms or sectors
 # firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[firmid %in% prodcom_firms]

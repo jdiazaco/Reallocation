@@ -135,10 +135,18 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
 # a) Load firm data and product data -----------------
 
 {
+  start <- 1980
+  end <- 2022
+
   patent_lvl_data <- as.data.table(read_parquet("3_patent_lvl_patent_dta.parquet"))
-  ipcr_cumulative <- as.data.table(readRDS("4a_ipcr_cumulative.RDS")) %>% select(firmid, firmid_char, year, n_ipcr, n_NACE, n_NACE_growth, n_ipcr_growth, ipcr_creat)
-  window_length<-2
-  
+  ipcr_cumulative <- as.data.table(readRDS("4a_ipcr_cumulative.RDS"))
+  if (grepl("Drive", getwd())) {
+    patent_lvl_data[, firmid_char := as.character(firmid)]
+    ipcr_cumulative[, firmid_char := as.character(firmid)]
+  }
+  ipcr_cumulative <- ipcr_cumulative[, .(firmid, firmid_char, year, n_ipcr, n_NACE, n_NACE_growth, n_ipcr_growth, ipcr_creat)]
+  window_length <- 2
+
   filings_per_year <- patent_lvl_data[, .(num_pat_filings = n_distinct(control1)), by = .(firmid_char, filing_year)]
   families_per_year <- patent_lvl_data[, .(num_pat_families = uniqueN(patent_family)), by = .(firmid_char, filing_year)]
   
@@ -177,6 +185,8 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
     setnames(growth, "growth", paste0(var, "_growth"))
     firm_lvl_patent_data <- merge(firm_lvl_patent_data, growth, by = c("firmid", "year"), all.x = TRUE)
   }
+
+  names(firm_lvl_patent_data)
   hist(firm_lvl_patent_data$total_pat_filings_growth)
   hist(firm_lvl_patent_data$total_pat_families_growth)
   
@@ -189,14 +199,14 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
   # for (var in c("total_pat_filings_growth", "total_pat_families_growth")) {
   #   product_summary[, (var) := fifelse(is.na(get(var)), 0, get(var))]
   # }
-  # 
+  #
   # for (var in c("pat_filings_dummy", "pat_families_dummy")) {
   #   win_name <- paste0(var, "_window_psum")
   #   product_summary <- window_var_cretor(product_summary, "firmid", "year", var, window_length, 0, win_name, na_rm = TRUE)
   #   orig_win <- paste0(var, "_window")
   #   product_summary[, (win_name) := fifelse(get(win_name) == 0 & get(orig_win) == 1 & !is.na(get(orig_win)), 1, get(win_name))]
   # }
-  
+
   # Bring in IPCR information, clean it and merdge it to product_summary
   # ipcr_cumulative[, firmid := as.integer(.GRP), by = firmid] %>% .[, firmid := as.numeric(firmid)]
   firm_lvl_patent_data <- merge(firm_lvl_patent_data, ipcr_cumulative, by = c("firmid", "year"), all.x = TRUE)
@@ -208,6 +218,6 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
     window_var_cretor("firmid", "year", "ipcr_creat", window_length, 0, "ipcr_creat_window", na_rm = TRUE) # Create 2-year window for ipcr_creat
   
   # Save final data
-  write_rds(patenting_products, "4b_patenting_products_firm_level.RDS")
+  write_parquet(firm_lvl_patent_data, "4b_patenting_products_firm_level.parquet")
 }
 
