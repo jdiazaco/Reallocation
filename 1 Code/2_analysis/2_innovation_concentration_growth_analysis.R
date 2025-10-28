@@ -10,69 +10,72 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 # 8) IPC analysis -----------------
 
 # Load all necessary data
-firm_data <- read_parquet("1_firm_yr_lvl_dta.parquet")  # Firm-year level data (from b.)
-product_data <- read_parquet("2b_product_lvl_dta.parquet") # Product information aggregated at the firm level (from e.)
-industry_data <- read_parquet("5_industry_yr_lvl_dta.parquet") # Industry data (from c.)
-patent_data <- read_rds("4_firm_lvl_patent_dta.parquet") # Patent and trademark data (from f.)
+
 
 start=2009
+end=2022
+
+patenting_products <- read_rds("6_final_firm_lvl_dta.rds")  # Firm-year level data (from b.)
+
+# Find which names are in firm_data and which aren't
+selected_names <- c(
+  # Identifiers
+  "firmid", "year",
+
+  # Industry / classification
+  "NACE_BR", "NACE_2d_BR",
+  "NACE_cum", "NACE_cum_l", "new_NACE",
+  "n_NACE", "n_NACE_bar", "n_NACE_growth",
+
+  # Firm demographics & age/size buckets
+  "young", "firm_age", "log_firm_age",
+  "age_leader", "age_size_bucket", "age_size_quartile", "age_size_decile", "age_size_percentile", "age_size_1000tile",
+  "leader",
+
+  # Size measures and ranks
+  "size", "size_quartile", "size_decile", "size_percentile", "size_1000tile",
+  "rank_within_industry", "n_firms_in_industry",
+
+  # Employment / inputs
+  "empl_bar", "empl_l", "log_empl_bar",
+  "empl_growth", "nq_bar", "nq_growth",
+  "capital", "capital_bar", "capital_growth",
+
+  # Revenue / shares
+  "rev_bar", "rev_growth",
+  "within_economy_rev_share_BR", "within_economy_rev_share_BR_l", "within_economy_rev_share_BR_growth",
+  "within_industry_rev_share", "within_industry_rev_share_l", "within_industry_rev_share_bar", "within_industry_rev_share_growth",
+
+  # Productivity
+  "tfp_bar", "tfp_growth",
+
+  # Product portfolio & dynamics
+  "number_of_products",
+  "prod_creat", "prod_destr", "prod_added", "prod_removed",
+  "new_products", "first_introduction",
+  "net_product_creat", "net_product_creat_window",
+  "net_product_destr", "net_product_destr_window",
+
+  # Patents & filings
+  "patent", "patent_window", "ever_patent",
+  "pat_filings_dummy", "pat_filings_dummy_window", "num_pat_filings", "total_pat_filings", "total_pat_filings_growth",
+  "pat_families_dummy", "pat_families_dummy_window", "num_pat_families", "total_pat_families", "total_pat_families_growth",
+  "product_innovative_pat_filings_window", "product_strategic_pat_filings_window", "product_innovative_pat_families_window", "product_strategic_pat_families_window",
+
+  # IPC expansion / IPCR measures
+  "ipcr_cum", "ipcr_cum_l", "ipcr_creat", "ipcr_creat_window", "new_ipcr",
+  "n_ipcr", "n_ipcr_bar", "n_ipcr_growth",
+
+  # Trademarks
+  "tm", "tm_window", "ever_tm"
+)
+
+in_firm_data <- selected_names[selected_names %in% names(patenting_products)]
+not_in_firm_data <- selected_names[!selected_names %in% names(patenting_products)]
 # Keep only continuers and from 2009
-firm_data <- firm_data[year>=start & abs(empl_growth) != 2 & abs(nq_growth) != 2]
+patenting_products <- patenting_products[year>=start & abs(empl_growth) != 2 & abs(nq_growth) != 2]  %>%
+  select(in_firm_data)
 
-
-
-  %>%
-  select(
-    firmid, year, NACE_BR, NACE_2d, young,
-    patent, patent_window, ever_patent,
-    size, young, firm_age, number_of_products,
-    # superstar, superstar_cr4, superstar_tfp_99, superstar_tfp_90,
-    prod_creat, prod_destr,
-    within_economy_rev_share_BR, within_industry_rev_share,
-    tm, tm_window, ever_tm,
-    new_products, first_introduction,
-    net_product_creat, net_product_creat_window,
-    net_product_destr, net_product_destr_window,
-    empl_bar, empl_l, empl_growth, nq_growth, nq_bar,
-    capital, capital_growth, capital_bar,
-    tfp_growth, tfp_bar, rev_growth, rev_bar,
-    rank_within_industry, n_firms_in_industry,
-    size_quartile, size_decile, size_percentile, size_1000tile, leader,
-    age_size_bucket, age_size_quartile, age_size_decile, age_size_percentile, age_size_1000tile, age_leader,
-    ipcr_cum, NACE_cum, n_ipcr, n_NACE, n_NACE_bar, n_ipcr_bar, n_NACE_growth,
-    n_ipcr_growth, ipcr_cum_l, NACE_cum_l, new_ipcr, new_NACE, ipcr_creat
-  )
-
-names(patenting_products)
-
-# Identify firms that have patented at some point
-ipcr_firmids <- unique(ipcr_cumulative$firmid) # length(ipcr_firmids) 118129
-prod_firmids <- unique(patenting_products$firmid) # length(prod_firmids) 70354
-patenting_prod_firmids <- intersect(ipcr_firmids, prod_firmids) # length(patenting_prod_firmids) 9109
-fwrite(data.frame(patenting_prod_firmids=unlist(patenting_prod_firmids)), paste0("firm_lists/patenting_firms_in_BR_no_outliers.csv"))
-
-# Create  variables and clean data
-patenting_products[, `:=`(ipcr_creat = fifelse(is.na(ipcr_creat), 0, ipcr_creat))] %>% # Treat NA as 0 for ipcr_creat
-  window_var_cretor("firmid", "year", "ipcr_creat", 2, 0, "ipcr_creat_window", na_rm = F) %>% # Create 2-year window for ipcr_creat
-  .[, `:=`(
-    log_firm_age = log(firm_age),
-    log_empl_bar = log(empl_bar)
-  )] %>%
-  .[, product_innovative_patent_window := net_product_creat_window * patent_window] %>% # Interaction between product creation and patenting
-  .[, product_strategic_patent_window := (1 - net_product_creat_window) * patent_window] # Interaction between lack of product creation and patenting
-
-# Create revenue share growth variables
-rev_share_growth <- growth_creator(patenting_products, c("within_economy_rev_share_BR", "within_industry_rev_share"), 1) %>%
-  select(
-    firmid, year,
-    within_economy_rev_share_BR_growth, within_economy_rev_share_BR_l,
-    within_industry_rev_share_growth, within_industry_rev_share_l, within_industry_rev_share_bar
-  )
-
-# Merge all data
-patenting_products <- merge(patenting_products, rev_share_growth, by = c("firmid", "year"), all.x = T) %>%
-  merge(industry_data, by = c("NACE_BR", "year"), all.x = T)
-rm(rev_share_growth, industry_data, ipcr_cumulative); gc()
 
 # Save final data
 write_rds(patenting_products, "patenting_products_firm_level.RDS")

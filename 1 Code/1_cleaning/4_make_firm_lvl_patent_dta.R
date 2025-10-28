@@ -144,7 +144,9 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
     patent_lvl_data[, firmid_char := as.character(firmid)]
     ipcr_cumulative[, firmid_char := as.character(firmid)]
   }
-  ipcr_cumulative <- ipcr_cumulative[, .(firmid, firmid_char, year, n_ipcr, n_NACE, n_NACE_growth, n_ipcr_growth, ipcr_creat)]
+  ipcr_cumulative <- ipcr_cumulative[, .(firmid, firmid_char, year, n_ipcr, n_NACE, n_NACE_growth, n_ipcr_growth, ipcr_creat,
+                                         ipcr_cum, NACE_cum, n_NACE_bar, n_ipcr_bar,
+                                         ipcr_cum_l, NACE_cum_l, new_ipcr, new_NACE)]
   window_length <- 2
 
   filings_per_year <- patent_lvl_data[, .(num_pat_filings = n_distinct(control1)), by = .(firmid_char, filing_year)]
@@ -217,7 +219,13 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
   firm_lvl_patent_data <- firm_lvl_patent_data %>% # Treat NA as 0 for ipcr_creat
     window_var_cretor("firmid", "year", "ipcr_creat", window_length, 0, "ipcr_creat_window", na_rm = TRUE) # Create 2-year window for ipcr_creat
   
+  # Create data table with unique firmid-firmid_char realisations in firm_lvl_patent_data
+  firmid_keys_firm_lvl <- unique(firm_lvl_patent_data[, .(firmid, firmid_char)])
+  
   # Save final data
-  write_parquet(firm_lvl_patent_data, "4b_patenting_products_firm_level.parquet")
+  fwrite(firmid_keys_firm_lvl, "firm_lists/firmid_keys_firm_lvl_patent_data.csv")
+  write_rds(firm_lvl_patent_data, "4b_patenting_products_firm_level.rds")
+  
+  
 }
 

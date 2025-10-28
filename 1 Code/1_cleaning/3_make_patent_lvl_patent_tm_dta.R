@@ -93,7 +93,8 @@ output <- merge(n_filings, n_publications, by = c("siren", "year"), all = TRUE) 
 
 alex_patents_scrapped <- as.data.table(read_parquet(paste0("patent_data/patent_record_level_final.parquet"))) 
 
-# Prepare data for lexisnexis --------------------
+{
+# Prepare data for lexisnexis ----
 
 alex_patents_lexis_info <- alex_patents_scrapped[, n_publication := paste0(collection, publication_number)] %>%
   .[, control1 := n_publication] %>%      
@@ -163,8 +164,6 @@ alex_patents_lexis_nexis <- alex_patents_lexis_nexis[!is.na(siren)] # Keep only 
 alex_patents_lexis_nexis <- alex_patents_lexis_nexis[!is.na(control1)] # Keep only patents with siren and control1 (patent id) # Up to here nobs is 2661609
 
 write_parquet(alex_patents_lexis_nexis, "patent_data/b_alex_patents_lexis_nexis.parquet", compression = "snappy")
-
-
 ## Plots Alex ----------------------------------------------------------
 
 alex_patents_lexis_nexis <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet")
@@ -196,12 +195,14 @@ summary_stats <- patents_per_family_alex[, .(
 
 #and export well-formatted for publication in Excel format
 writexl::write_xlsx(summary_stats, "patent_data/patents_per_family_summary_stats_alex.xlsx")
+## Find records in the alex dataset with same title and with the same siren but different patent family ---------------------------------
 
-# Find records in the alex dataset with same title and with the same siren but different patent family
+alex_patents_lexis_nexis <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet")
+
 duplicate_titles <- alex_patents_lexis_nexis[!is.na(title.x) & !is.na(patent_family), .N, by = .(title.x, siren)][N > 1, title.x]
-duplicate_records <- alex_patents_lexis_nexis[title.x %in% duplicate_titles, .(title.x, patent_family, control1, siren)]
-  
-
+duplicate_records <- alex_patents_lexis_nexis[title.x %in% duplicate_titles, .(title.x, patent_family, control1, siren)] 
+duplicate_records <- duplicate_records[, .(n_families=n_distinct(patent_family)), by = .(title.x, siren)][n_families>1]
+duplicate_records <- merge(duplicate_records, alex_patents_lexis_nexis, by=c("title.x", "siren"), all.x=TRUE)
 # Summary stats on the overlap between the two datasets ---------------------------------------------------
 
 inpi_patent_data <- read_parquet("patent_data/a_patents_deposants.parquet") %>% setDT(.)
@@ -238,10 +239,10 @@ summary_overlap <- data.table(
 )
 
 #and export well-formatted for publication in Excel format
-writexl::write_xlsx(summary_overlap, "patent_data/summary_stats_overlap_inpi_alex.xlsx")
-
+writexl::write_xlsx(summary_overlap, "patent_data/summary_overlap_inpi_alex.xlsx")
+}
 # 3) Bring together and clean patent data -------------
-
+{
 # Create patent families per source --------------------
 inpi_patent_data <- read_parquet("patent_data/a_patents_deposants.parquet") %>% setDT(.)
 alex_patent_data <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet") %>% setDT(.)
@@ -255,6 +256,7 @@ patent_families <- data.table(
     "alex"
   )]
 
+# per source, divide into 100 groups with the same number of obs
 write_csv(patent_families, "patent_data/patent_families_per_source.csv")
 
 # Read IPC information files and combine them --------------------
@@ -275,8 +277,6 @@ ipc_list <- lapply(csv_files_ipc, function(f) {
 ipc_data <- rbindlist(ipc_list, use.names = TRUE, fill = TRUE)
 setnames(ipc_data, tolower(gsub(" ", "_", names(ipc_data))))
 ipc_data <- unique(ipc_data[, .(publication_number, collection, ipc_code)])
-
-
 # Merge IPC data with patent data --------------------
 common_names <- intersect(names(inpi_patent_data), names(alex_patent_data))
 alex_names <- setdiff(names(alex_patent_data), common_names)
@@ -299,8 +299,6 @@ final_patents <- unique(final_patents, by = setdiff(names(final_patents), "title
 final_patents <- merge(final_patents, patent_families, by = "patent_family", all.x = TRUE)
 final_patents <- merge(final_patents, ipc_data, by = "patent_family", all.x = TRUE)
 setorder(final_patents, siren, filing_year, source)
-
-
 # Replace () by nothing and - by _ in column names
 setnames(final_patents, tolower(gsub("[()]", "", gsub("-", "_", names(final_patents)))))
 
@@ -312,19 +310,21 @@ final_patents <- final_patents[
 ]
 
 # Save final patents data
-write_parquet(final_patents, "4_patent_lvl_patent_dta.parquet", compression = "snappy")
+write_parquet(final_patents, "3_patent_lvl_patent_dta.parquet", compression = "snappy")
 
-# 3) Text similarity analysis to assign prodcom codes to patents --------------------
+}
+# 4) Text similarity analysis to assign prodcom codes to patents --------------------
 prodcom_codes <- read_delim("Ancillary datasets/prodcom codes.csv", 
                             delim = ";", escape_double = FALSE, trim_ws = TRUE) %>% setDT(.) %>%
   .[nchar(code)>4]
 
-test <- patents_alex[!is.na(Title) & !is.na(Abstract)] %>%
-  .[1:2] %>%
-  select(Title, Abstract) %>%
-  rename(title = Title, abstract = Abstract)
+alex_patent_data <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet") %>% setDT(.)
+test <- alex_patent_data[!is.na(title.y) & !is.na(abstract)] %>%
+  .[patent_family=="FR2912244.A1"] %>%
+  select(title.y, abstract) %>%
+  rename(title = title.y, abstract = abstract)
 
-# Sys.setenv(OPENAI_API_KEY = "sk-...") # 
+Sys.setenv(OPENAI_API_KEY = "") #
 
 similarity_method <- if (nzchar(Sys.getenv("OPENAI_API_KEY"))) "openai_embeddings" else "doc2vec"
 
@@ -342,6 +342,224 @@ test2 <- merge(test2, prodcom_codes, by.x = "prodcom_code", by.y = "code", all.x
 
 row_sums <- rowSums(likelihoods)
 print(row_sums)
+
+openxlsx::write.xlsx(test2, "patent_data/patent_prodcom_likelihoods.xlsx")
+
+# 5) Patent citations cleaning -------------------------------------------------------
+
+# Read prior art data
+patent_data <- read_parquet("3_patent_lvl_patent_dta.parquet")
+
+prior_art_folder <- "patent_data/prior_art/"
+
+# Unzip all zip files in the prior art folder
+zip_files <- list.files(prior_art_folder, pattern = "\\.zip$", full.names = TRUE)
+for (zip_file in zip_files) {
+  folder_name <- file.path(prior_art_folder, tools::file_path_sans_ext(basename(zip_file)))
+  if (!dir.exists(folder_name)) dir.create(folder_name, recursive = TRUE, showWarnings = FALSE)
+  unzip(zip_file, exdir = folder_name)
+}
+# List all CSV files in the prior art folder (including subfolders)
+csv_files_prior_art <- list.files(
+  prior_art_folder,
+  pattern = "\\.csv$", full.names = TRUE, recursive = TRUE
+)
+
+# Read each csv file, and clean it in the following way:
+# 1) name columns: patent_family, prior_art
+# 2) prior_art is of the form: *text*(patent_number et al). Extract only the patent_number)
+# 3) using patent_data, bring in patent_family (key=patent_family in both datasets) firmid and prior_art firmid (key=prior_art in prior art and patent_family in patent_data)
+prior_art_list <- lapply(csv_files_prior_art, function(f) {
+  print(f)
+  dt <- as.data.table(read_csv(f, skip = 8))
+  setnames(dt, tolower(gsub(" ", "_", names(dt))))
+  # names(dt)[names(dt)=="prior_art_(owner_and_document_number)"] <- "prior_art"
+  dt <- dt[, .(patent_family, `prior_art_(owner_and_document_number)`)]
+  dt[, prior_art := gsub("\\s+", "", sub(".*\\(([^ ]+).*", "\\1", `prior_art_(owner_and_document_number)`))] # Extract patent number before 'et al' and remove spaces
+  
+  # dt <- rbindlist(prior_art_list, use.names = TRUE, fill = TRUE)
+  dt <- unique(dt)
+  dt <- merge(
+    dt, unique(patent_data[, .(patent_family, firmid)]),
+    by = "patent_family", all.x = TRUE, suffixes = c("", "_citing")
+  )
+  setnames(dt, "firmid", "firmid_current")
+  dt <- merge(
+    dt, unique(patent_data[, .(patent_family, firmid)]),
+    by.x = "prior_art", by.y = "patent_family", all.x = TRUE, suffixes = c("", "_cited")
+  )
+  setnames(dt, "firmid", "firmid_prior")
+  # Replace NA firmid_prior with "unknown"
+  dt[is.na(firmid_prior), firmid_prior := "unknown"]
+  
+  return(dt)
+  
+})
+
+prior_art_dt<-rbindlist(prior_art_list, use.names = TRUE, fill = TRUE)
+rm(prior_art_list); gc()
+prior_art_dt <- unique(prior_art_dt)
+
+# Now collapse, in the following way:
+# for each patent_family: 
+# number of distinct prior_art, 
+# number of times firmid_current== firmid_prior (self-citations), 
+# number of times firmid_current != firmid_prior (external citations)
+# vector with unique prior_art,
+# vector with unique firmid_prior
+dt_summary <- prior_art_dt[, .(
+  n_distinct_prior_art = uniqueN(prior_art),
+  n_prior_art=.N,
+  n_self_citations = sum(firmid_current == firmid_prior),
+  n_external_citations = sum(firmid_current != firmid_prior),
+  prior_art_list = list(unique(prior_art)),
+  firmid_prior_list = list(unique(firmid_prior))
+), by = patent_family]
+
+dt_summary <- merge(dt_summary, unique(patent_data[, .(patent_family, filing_year)]), by="patent_family", all.x=T)
+
+dt_summary[, `:=`(
+  share_self_citation = n_self_citations / n_distinct_prior_art,
+  share_external_citation = n_external_citations / n_prior_art
+)]
+
+write_rds(dt_summary, "3b_patent_citation_summary.RDS")
+
+# 6) patent citations plots -------------------------------------------------------
+
+dt_summary <- read_rds("3b_patent_citation_summary.RDS")
+
+dt_summary_by_year <- dt_summary[, .(
+  mean_n_distinct_prior_art = mean(n_distinct_prior_art, na.rm = TRUE),
+  mean_n_prior_art = mean(n_prior_art, na.rm = TRUE),
+  mean_n_self_citations = mean(n_self_citations, na.rm = TRUE),
+  mean_n_external_citations = mean(n_external_citations, na.rm = TRUE),
+  mean_share_self_citation = mean(share_self_citation, na.rm=TRUE),
+  mean_share_external_citation = mean(share_external_citation, na.rm=TRUE),
+  n= .N
+), by = filing_year]
+
+ggplot(dt_summary_by_year[filing_year>=1994 & filing_year<=2017], aes(x = filing_year)) +
+  geom_line(aes(y = mean_n_distinct_prior_art, color = "Mean Distinct Prior Art")) +
+  geom_line(aes(y = mean_n_prior_art, color = "Mean Prior Art")) +
+  # geom_line(aes(y = mean_n_self_citations, color = "Mean Self Citations")) +
+  geom_line(aes(y = mean_n_external_citations, color = "Mean External Citations")) +
+  labs(
+    title = "Mean Share of Self-Citations and External Citations Over Time",
+    x = "Filing Year",
+    y = "Mean Share",
+    color = "Citation Type"
+  ) +
+  theme_minimal()
+
+
+ggplot(dt_summary_by_year[filing_year>=1994 & filing_year<=2017], aes(x = filing_year)) +
+  geom_line(aes(y = mean_share_self_citation, color = "Mean Share of Self-Citations")) +
+  # geom_line(aes(y = mean_share_external_citation, color = "Mean Share of External Citations")) +
+  labs(
+    title = "Mean Share of Self-Citations and External Citations Over Time",
+    x = "Filing Year",
+    y = "Mean Share",
+    color = "Citation Type"
+  ) +
+  theme_minimal()
+prior_art_data <- rbindlist(prior_art_list, use.names = TRUE, fill = TRUE)
+prior_art_data <- unique(prior_art_data)
+prior_art_data <- merge(
+  prior_art_data, patent_data[, .(patent_family, firmid)],
+  by = "patent_family", all.x = TRUE, suffixes = c("", "_citing")
+)
+setnames(prior_art_data, "firmid", "firmid_citing")
+prior_art_data <- merge(
+  prior_art_data, patent_data[, .(patent_family, firmid)],
+  by.x = "prior_art", by.y = "patent_family", all.x = TRUE, suffixes = c("", "_cited")
+)
+setnames(prior_art_data, "firmid", "firmid_cited")
+# 7) Compare firmids-patent FAMILIES in inpi and alex data -------------------------------------------------------------------------
+
+inpi_patent_data <- read_parquet("patent_data/a_patents_deposants.parquet") %>% setDT(.)
+alex_patent_data <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet") %>% setDT(.)
+
+inpi_patent_data <- inpi_patent_data[, .(siren=list(unique(siren))), by=patent_family]
+alex_patent_data <- alex_patent_data[, .(siren=list(unique(siren))), by=patent_family]
+
+patent_source <- merge(patent_source[source=="both", .(patent_family)], 
+                       inpi_patent_data,
+                       by="patent_family",
+                       all.x=TRUE)
+setnames(patent_source, "siren", "siren_inpi")
+patent_source <- merge(patent_source, 
+                       inpi_patent_data,
+                       by="patent_family",
+                       all.x=TRUE,
+                       allow.cartesian=F)
+setnames(patent_source, "siren", "siren_alex")
+
+# helper to normalise list-columns to character vectors without NA
+norm_list <- function(x) {
+  if (is.null(x)) return(character(0))
+  v <- unlist(x)
+  v <- v[!is.na(v)]
+  as.character(v)
+}
+
+a_list <- lapply(patent_source$siren_inpi, norm_list)
+b_list <- lapply(patent_source$siren_alex, norm_list)
+
+same_exact <- mapply(function(a,b) identical(a,b), a_list, b_list)
+same_set   <- mapply(function(a,b) setequal(a,b), a_list, b_list)
+overlap_count <- mapply(function(a,b) length(intersect(a,b)), a_list, b_list)
+union_count   <- mapply(function(a,b) length(union(a,b)), a_list, b_list)
+jaccard <- ifelse(union_count == 0, NA_real_, overlap_count / union_count)
+
+patent_source[, `:=`(
+  same_exact = same_exact,
+  same_set = same_set,
+  overlap_count = overlap_count,
+  union_count = union_count,
+  jaccard = jaccard
+)]
+
+# quick summaries
+patent_source[, .(
+  total = .N,
+  n_same_exact = sum(same_exact),
+  n_same_set_only = sum(same_set & !same_exact),
+  n_no_overlap = sum(overlap_count == 0)
+)]
+
+# 8) Compare firmids-patent APPLICATIONS in inpi and alex data
+
+inpi_patent_data <- read_parquet("patent_data/a_patents_deposants.parquet") %>% setDT(.)
+inpi_patent_records <- as.data.table(fread("G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/2 Data/patent_data/deposants-des-brevets_clean2.csv")) %>%
+  .[, siren:=str_pad(as.character(siren), 9, side="left", "0") ]
+inpi_patent_records <- merge(inpi_patent_records,
+                             inpi_patent_data[, .(key_appln_nr=control1, patent_family)],
+                             by="key_appln_nr",
+                             all.x = T) %>% unique()
+inpi_patent_records <- inpi_patent_records[, .(siren_list=list(unique(siren))), by=.(key_appln_nr, patent_family)]
+
+
+alex_patent_data <- read_parquet("patent_data/b_alex_patents_lexis_nexis.parquet") %>% setDT(.)
+alex_patents_scrapped <- as.data.table(read_parquet(paste0("patent_data/patent_record_level_final.parquet"))) 
+alex_patents_scrapped <- merge(alex_patents_scrapped[, .(publication_number=paste0(collection, publication_number), siren)] ,
+                               alex_patent_data[, .(publication_number=control1, patent_family)],
+                               by="publication_number",
+                               all.x = T) %>% unique()
+alex_patents_scrapped[, siren_list := strsplit(siren, ",")]
+alex_patents_scrapped <- alex_patents_scrapped[, .(siren_list=list(unique(siren))), by=.(publication_number, patent_family)]
+
+
+
+overlap <- merge(inpi_patent_records[, .(siren=siren_list, app_n=key_appln_nr)], 
+                 alex_patents_scrapped[, .(siren=siren_list, app_n=application_number)],
+                 by=c("app_n"),
+                 suffix=c("_inpi", "_alex"))
+
+
+patent_source <- fread("patent_data/patent_families_per_source.csv")
+
+
 
 
 

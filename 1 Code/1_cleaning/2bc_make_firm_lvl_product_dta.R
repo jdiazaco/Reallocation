@@ -218,6 +218,23 @@ setnames(agg_product_data,
     new = c("prod_added", "prod_paused", "prod_reintroduced", "prod_removed", "prod_incumbent")
 )
 
+# Create dummies and windows for creation and destruction variables
+agg_product_data[, c("prod_creat","prod_destr","net_product_creat","net_product_destr") := .(
+  as.integer(prod_added > 0),
+  as.integer(prod_removed > 0),
+  pmax(prod_added - prod_removed, 0),
+  pmax(prod_removed - prod_added, 0)
+)]
+
+# Create windows
+for(var in c("prod_creat","prod_destr","net_product_creat","net_product_destr")){
+  agg_product_data <- window_var_cretor(agg_product_data, "firmid", "year", 
+                                        var, 
+                                        2, 0, 
+                                        paste0(var, "_window"), 
+                                        na_rm = F) 
+}
+
 # Create number_of_products column
 agg_product_data[, number_of_products := prod_added + prod_reintroduced + prod_incumbent]
 
@@ -266,8 +283,7 @@ for (var in vars){
 # agg_product_data[, rev_share2 := rev_bar / sum(rev_bar, na.rm = TRUE), by = year]#Here aggregating by year in a new variable, getting the revenue share for the whole economy, but not collapsing the firm-year information.
 agg_product_data[, `:=`(
     rev_reallocation_weighted = rev_reallocation * rev_share,
-    rev_growth_weighted = rev_growth * rev_share,
-    rev_bar = NULL
+    rev_growth_weighted = rev_growth * rev_share
 )]
 
 # This should be only 1
