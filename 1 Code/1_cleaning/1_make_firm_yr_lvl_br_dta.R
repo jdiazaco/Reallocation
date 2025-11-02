@@ -25,16 +25,16 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     print(yr)
     ## import BR data
     br_path = paste0(raw_dir, "br/br", yr, ".csv")
-    br_data_temp = fread(br_path, select = c("ENT_ID", "year", "empl", "NACE_M", "Start_Ent", "LEGAL"))
+    br_data_temp = fread(br_path, select = c("ENT_ID", "year", "NACE_M", "Start_Ent", "LEGAL"))
     br_data_temp[, NACE_BR := NACE_M]
     br_data_temp[, `:=`(firmid = as.character(ENT_ID))]
     br_data_temp = br_data_temp %>%
       rename(lfo = LEGAL) %>%
-      select(firmid, year, empl, NACE_BR, Start_Ent)
+      select(firmid, year, NACE_BR, Start_Ent)
   }), fill = T)
   
   ## import SBS data
-  interest_vars = c("ENT_ID", "year", "SBS_12110")
+  interest_vars = c("ENT_ID", "year", "SBS_12110", "SBS_16110")
   sbs_data = rbindlist(lapply(c(start:end), function(yr) {
     print(yr)
     ## import SBS
@@ -46,7 +46,7 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     sbs_data_temp = sbs_data_temp %>% select(intersect(interest_vars, colnames(sbs_data_temp)))
   }), use.names = T, fill = T)
   sbs_data = sbs_data %>% select(interest_vars)
-  colnames(sbs_data) = c("firmid", "year", "nq")
+  colnames(sbs_data) = c("firmid", "year", "nq", "empl")
   
   ## Juli?n: import BS data to get capital measures
   interest_vars = c("ENT_ID", "year", "capital", "turnover", "raw_materials", "labor_cost")
@@ -66,32 +66,36 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   # There are some firmid codes with less than 9-digits that are 9-digit codes in the other database
   # This happens because they start with 0 in the other database
   # Here I add an initial 0 to all firmids that have less than 9 digits
+  br_data$firmid <- str_pad(br_data$firmid, width = 9, side = "left", pad = "0")
+  bs_data$firmid <- str_pad(bs_data$firmid, width = 9, side = "left", pad = "0")
+  sbs_data$firmid <- str_pad(sbs_data$firmid, width = 9, side = "left", pad = "0")
   
+  setkey(br_data, firmid, year)
+  setkey(bs_data, firmid, year)
+  setkey(sbs_data, firmid, year)
   
-  br_data$firmid_char <- str_pad(br_data$firmid, width = 9, side = "left", pad = "0")
-  bs_data$firmid_char <- str_pad(bs_data$firmid, width = 9, side = "left", pad = "0")
-  sbs_data$firmid_char <- str_pad(sbs_data$firmid, width = 9, side = "left", pad = "0")
+  # firmid_keys <- data.table(firmid= c(unique(br_data$firmid),
+  #                                          unique(bs_data$firmid),
+  #                                          unique(bs_data$firmid)))
+  # 
+  # firmid_keys <- unique(firmid_keys) %>% arrange(firmid, desc=T) %>%  .[, firmid:=.I]
+  # fwrite(firmid_keys, "firm_lists/firmid_keys.csv")
   
-  firmid_keys <- data.table(firmid_char= c(unique(br_data$firmid_char),
-                                           unique(bs_data$firmid_char),
-                                           unique(bs_data$firmid_char)))
+  # br_data[, firmid:=NULL]
+  # bs_data[, firmid:=NULL]
+  # sbs_data[, firmid:=NULL]
   
-  firmid_keys <- unique(firmid_keys) %>% arrange(firmid_char, desc=T) %>%  .[, firmid:=.I]
-  fwrite(firmid_keys, "firm_lists/firmid_keys.csv")
-  
-  br_data[, firmid:=NULL]
-  bs_data[, firmid:=NULL]
-  sbs_data[, firmid:=NULL]
-  
-  br_data <- merge(br_data, firmid_keys, by=c("firmid_char"), all.x=T)
-  bs_data <- merge(bs_data, firmid_keys, by=c("firmid_char"), all.x=T)
-  sbs_data <- merge(sbs_data, firmid_keys, by=c("firmid_char"), all.x=T)
+  # br_data <- merge(br_data, firmid_keys, by=c("firmid"), all.x=T)
+  # bs_data <- merge(bs_data, firmid_keys, by=c("firmid"), all.x=T)
+  # sbs_data <- merge(sbs_data, firmid_keys, by=c("firmid"), all.x=T)
   
   ## merge data and remove those not in sbs / without labor
-  firm_yr_lvl_br_dta = merge(sbs_data, br_data, by=c("firmid", "firmid_char", "year"), all = T)
-  firm_yr_lvl_br_dta = merge(firm_yr_lvl_br_dta, bs_data, by=c("firmid", "firmid_char", "year"), all=T)
+  firm_yr_lvl_br_dta = sbs_data[br_data]
+  setkey(firm_yr_lvl_br_dta, firmid, year)
+  firm_yr_lvl_br_dta <- bs_data[firm_yr_lvl_br_dta]
   rm(sbs_data, br_data, bs_data)
   gc()
+  setkey(firm_yr_lvl_br_dta, firmid, year)
   
   ## define active firms as those with post employees;
   ## define firm birth/death as first/last time
@@ -110,9 +114,9 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   
 }
 
-# fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
-
-# firm_yr_lvl_br_dta <- fread("1_temp.csv")
+fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
+firm_yr_lvl_br_dta <- fread("1_temp.csv")
+setkey(firm_yr_lvl_br_dta, firmid, year)
 
 # Create age and young indicators
 firm_yr_lvl_br_dta[, legal_birth_year := ifelse(legal_birth_year == 0, NA, legal_birth_year)]
@@ -153,7 +157,7 @@ firm_yr_lvl_br_dta[, `:=`(sum_costs = (labor_cost + (capital * share_capital_cos
 
 
 ## generate lagged variables Juli?n: add capital
-normal_cols = c("nq", "empl", "capital", "raw_materials", "labor_cost") #, "tfp"
+normal_cols = c("nq", "empl", "capital", "raw_materials", "labor_cost", "tfpr") #, "tfp"
 firm_yr_lvl_br_dta <- growth_creator(
   data = firm_yr_lvl_br_dta,
   normal_cols = normal_cols,
@@ -204,8 +208,8 @@ firm_yr_lvl_br_dta[, size := case_when(
 )]
 table(firm_yr_lvl_br_dta$size, useNA = "always")
 
-# firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta %>% rename(firmid_char=firmid) %>% 
-#   .[, firmid:=as.numeric(firmid_char)]
+# firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta %>% rename(firmid=firmid) %>% 
+#   .[, firmid:=as.numeric(firmid)]
 
 
 # Create market share measures
@@ -310,32 +314,34 @@ table(firm_yr_lvl_br_dta[, .(n=.N), by=.(firmid, year)]$n)
 
 # Bring in Alex's linkedin data
 linkedin = read_parquet("linkedin_data/french_affiliated_firm_roles_collapsed_clean.parquet") %>%
-  select(-c(rcid, `__index_level_0__`))  %>% rename(firmid_char=siren) %>% setDT(.) %>%
-  .[, firmid:=NULL] %>% merge(firmid_keys, by=c("firmid_char"), all.x=T) %>% .[, firmid_char:=NULL]
-firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, linkedin, by = c("firmid", "year"), all.x = T)
+  select(-c(rcid, `__index_level_0__`))  %>% setDT(.)%>% setkey(firmid, year)
+firm_yr_lvl_br_dta <- linkedin[firm_yr_lvl_br_dta]
+rm(linkedin); gc()
 firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
 firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
+setkey(firm_yr_lvl_br_dta, firmid, year)
 
 # Bring in NUTS information
-nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv")
+nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv") 
 nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
 
 # # Clean it and merge it to product_summary
 nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
-nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+# nuts<-nuts[firmid %in% unique(product_summary$firmid)]
 nuts<-nuts[, c("firmid", "year", "nuts3")]
 nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
 nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
 nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
-nuts<-nuts[, c("firmid", "year", "nuts3")]# firmid==445045537
-product_summary<-merge(product_summary, nuts, by=c("firmid", "year"), all.x = T)
+nuts<-nuts[, c("firmid", "year", "nuts3")] %>% setkey(firmid, year) # firmid==445045537 
+# firm_yr_lvl_br_dta<- merge(firm_yr_lvl_br_dta, nuts, by=c("firmid", "year"), all.x = T)
+firm_yr_lvl_br_dta <- nuts[firm_yr_lvl_br_dta]
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
 write_parquet(NACE_BR_data, 'Ancillary datasets/NACE_BR_data.parquet')
 # 
 # firm_yr_lvl_br_dta <- read_parquet("1_firm_yr_lvl_br_dta.parquet")
-# firm_yr_lvl_br_dta[, c("firmid_char.x", "firmid_char.y"):=NULL]
+# firm_yr_lvl_br_dta[, c("firmid.x", "firmid.y"):=NULL]
 # firmid_keys<-fread("firm_lists/firmid_keys.csv")
 # 
 # firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, firmid_keys, all.x=TRUE)

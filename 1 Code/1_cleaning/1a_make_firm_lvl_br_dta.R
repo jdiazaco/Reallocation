@@ -16,7 +16,7 @@ if (nrow(birth_death) != length(unique(birth_death$firmid))) {
 }
 
 # Create active firm list for later use
-active_firm_list = firm_yr_lvl_br_dta[year <= economic_death_year | is.na(economic_death_year)] %>% select(firmid, firmid_char, year)
+active_firm_list = firm_yr_lvl_br_dta[year <= economic_death_year | is.na(economic_death_year)] %>% select(firmid, year)
 
 # Export datasets
 write_parquet(active_firm_list, "1a_active_firm_list.parquet")

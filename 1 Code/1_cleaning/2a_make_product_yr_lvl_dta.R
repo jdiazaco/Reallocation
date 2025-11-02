@@ -32,7 +32,7 @@ start = 2009
 end = 2022
 
 product_data = rbindlist(lapply(c(start:end),function(yr){
-  # yr<-2010
+  # yr<-2018
   print(yr)
   # import product data 
   # filepath = paste0(raw_dir,'prodcom/prodcom',yr,'.csv')
@@ -40,9 +40,9 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   dta_temp = fread(filepath)
   dta_temp[, firmid := as.character(firmid)]
   dta_temp[, pcc8 := as.character(pcc8)]
-  dta_temp$firmid_char<-str_pad(dta_temp$firmid, width = 9, side="left", pad="0")
-  dta_temp[, firmid:=NULL]
-  dta_temp <- merge(dta_temp, firmid_keys, by="firmid_char", all.x=T) 
+  dta_temp$firmid<-str_pad(dta_temp$firmid, width = 9, side="left", pad="0")
+  # dta_temp[, firmid:=NULL]
+  # dta_temp <- merge(dta_temp, firmid_keys, by="firmid", all.x=T) 
   
   #Juli?n: Replace NAs with 0s
   vars<-c("rev", "prod_q", "sold_q")
@@ -59,7 +59,7 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   
   #keep firms that employ labor, except if the latest prodcom available exceeds FARE/FICUS coverage
   if(yr<=br_end){
-    dta_temp = merge(dta_temp, active_firm_list, by = c('year','firmid', 'firmid_char'))
+    dta_temp = merge(dta_temp, active_firm_list, by = c('year','firmid'))
   }
   
   # define active as positive rev or quantities, keep only active products
@@ -72,7 +72,7 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   dta_temp = dta_temp[, .(rev = sum(rev, na.rm = T), 
                           code_entry_year=min(code_entry_year), 
                           sold_q=sum(sold_q, na.rm = T)),
-                      by= .(firmid, prodfra_plus, year, unit)]#, code_entry_year)]
+                      by= .(firmid, firmid, prodfra_plus, year, unit)]#, code_entry_year)]
 
   #generate product-HHI variable
   dta_temp[, total_rev := sum(rev, na.rm = T), by = firmid]
