@@ -15,7 +15,7 @@ rm(lifi_data); gc()
 
 product_data <- as.data.table(read_parquet(paste0("2_product_data/", cpa_or_pf, "/2c_firm_lvl_product_dta.parquet")))
 patent_data <- as.data.table(read_rds("4b_patenting_products_firm_level.RDS"))
-Vieindustry_data <- as.data.table(read_parquet("5_industry_yr_lvl_dta.parquet")) %>% select(-c("n_firms_in_industry", "leader_rev_share", "diff_leader_vs_2nd"))
+industry_data <- as.data.table(read_parquet("5_industry_yr_lvl_dta.parquet")) %>% select(-c("n_firms_in_industry", "leader_rev_share", "diff_leader_vs_2nd"))
 
 
 # Make lists of firms
