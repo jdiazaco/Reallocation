@@ -1,91 +1,73 @@
 # setup -------------------------------------------------------------------
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
 
-#1) compare PRODCOM and BR samples  ---------------------------------------------
-## import data and neaten var names 
-  comparison_dataset = readRDS('combined_sbs_br_prodcom_data.rds')
-  comparison_dataset= comparison_dataset %>%
-    rename(revenue = nq, employees = empl, 'high tech' = high_tech,
-           'full sample' = full_sample, 'prodcom only' = in_prodcom, 
-           'other sectors' = other_sector, 'low tech' = low_tech)
+# deridder_markups <- read_dta("deridder_markups.dta")
+deridder_markups <- read_parquet("1_firm_yr_lvl_br_dta.parquet")
+setDT(deridder_markups)
+deridder_markups <- deridder_markups[NACE_2d_BR %in% prodcom_sectors]
+deridder_markups <- deridder_markups[,  .(firmid, year,  
+                                          mu_sepcal_TL_sBFSR_t1, mu_sepcal_CD_sBFSR_t1, mu_sepcal_TL_sBFSR_t8, mu_sepcal_CD_sBFSR_t8,
+                                          mu_sepcal_TL_sBFSR_t10, mu_sepcal_CD_sBFSR_t10, mu_sepcal_TL_sNoFSR_t1, mu_sepcal_CD_sNoFSR_t1,
+                                          mu_sepcal_TL_sNoFSR_t8, mu_sepcal_CD_sNoFSR_t8, mu_sepcal_TL_sNoFSR_t10, mu_sepcal_CD_sNoFSR_t10,
+                                          NACE_BR, NACE_2d_BR, nq_bar, empl_bar, nq_empl, within_economy_rev_share_BR)]
+gc()
 
-  ## generate summary stats
-  interest_vars =  c('employees', 'revenue','age', 'young','high tech',
-                   'manufacturing', 'services')
+cols <- c("mu_sepcal_TL_sBFSR_t1", "mu_sepcal_CD_sBFSR_t1", "mu_sepcal_TL_sBFSR_t8", "mu_sepcal_CD_sBFSR_t8",
+          "mu_sepcal_TL_sBFSR_t10", "mu_sepcal_CD_sBFSR_t10", "mu_sepcal_TL_sNoFSR_t1", "mu_sepcal_CD_sNoFSR_t1",
+          "mu_sepcal_TL_sNoFSR_t8", "mu_sepcal_CD_sNoFSR_t8", "mu_sepcal_TL_sNoFSR_t10", "mu_sepcal_CD_sNoFSR_t10")
+cols_weighted <- paste(cols, "_weighted", sep="")
 
-# import function to generate summary stat csv and latex files 
-source('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/1 Code/3.1 summary stats helper.R')
+deridder_markups[, rev_share:=nq_bar/sum(nq_bar, na.rm=T), by=year]
+deridder_markups[, paste0(cols, "_weighted") :=  lapply(.SD, function(x) x*rev_share), .SDcols = cols]
+deridder_markups_collapsed <- deridder_markups[, lapply(.SD, sum, na.rm=T), by=year, .SDcols = cols_weighted]
 
-# compare full sample and prodcom sample
-sub_groups = c('full sample', 'prodcom only')
-make_summary_stats(comparison_dataset, interest_vars, "prodcom only", 'prodcom_comparison')
+for(col in cols_weighted){
+  print(col)
+  ggplot(deridder_markups_collapsed[year %in% 1995:2019], aes(x=year, y=.data[[col]]))+
+    geom_line() + 
+    theme_minimal() + 
+    labs(title="Aggregate markups over time",
+         subtitle=paste0("Var: ", col),
+         x="Year",
+         y="Markup") + guides(size = 'none') 
+  ggsave(paste0(output_dir, col, ".png"), width=9, height=6)
+    
+}
 
-# compare manufacturing vs. services vs. other 
-sub_groups_manufac = c('manufacturing', 'services', 'other sectors')
-interest_vars_manufac = interest_vars[! interest_vars %in% c('manufacturing', 'services')]
-make_summary_stats(comparison_dataset, interest_vars_manufac, sub_groups_manufac,
-                   'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 output/summary stats/manufac_vs_services')
-
-# compare high tech vs. low tech 
-sub_groups_manufac = c('low tech', 'high tech')
-interest_vars_manufac = interest_vars[! interest_vars %in% 'high tech']
-make_summary_stats(comparison_dataset, interest_vars_manufac, sub_groups_manufac,
-                   'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 output/summary stats/high_vs_low_tech')
-
-## generate industry coverage rate
-comparison_dataset[, `:=`(matched_rev = revenue*`prodcom only`, industry_rev = sum(revenue)), by = industry]
-industry_comps = comparison_dataset[,.(obs_matched = round(sum(`prodcom only`,na.rm = T)/.N, 3),
-                                       rev_matched =round(sum(revenue*`prodcom only`, na.rm = T)/sum(revenue, na.rm = T),3)), by = industry]
-industry_comps= industry_comps[!is.na(industry)]
-setorder(industry_comps, -rev_matched)
-saveRDS(industry_comps, 'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 output/summary stats/prodcom_industry_coverage.rds')
-
-## generate change in sectoral composition over time 
-  comparison_dataset = readRDS('combined_sbs_br_prodcom_data.rds')
-  comparison_dataset[, `:=`(sector_name = ifelse(is.na(NACE_BR), NA,
-                                                 ifelse(manufacturing, 'manufacturing',
-                                                        ifelse(services, 'services', 'other sectors'))))]
-  sectoral_decomp = comparison_dataset[!is.na(NACE_BR)]
-  sectoral_decomp =  sectoral_decomp[, .(firms = .N,
-                                           rev_share = sum(nq, na.rm =T),
-                                           empl_share = sum(empl, na.rm =T)), by = .(year,sector_name)]
   
-  sectoral_decomp =  sectoral_decomp[, `:=`(firm_share = firms/sum(firms),
-                                         rev_share = rev_share/sum(rev_share),
-                                         empl_share = empl_share/ sum(empl_share)), by = .(year)] %>%select(-firms)
-  sectoral_decomp[,3:5] = round(sectoral_decomp[,3:5],2)
-  ylim = c(0, max(sectoral_decomp[,3:5]))
-  
-  variables = c('firm_share', 'rev_share', 'empl_share')
-  titles = c('Firm Share', 'Revenue Share', 'Labor Share')
-  sector_graphs = lapply(seq_along(variables),function(i){
-  ouput = ggplot(sectoral_decomp, aes(x = year, y = get(variables[i]), color = sector_name)) + geom_line() +
-    scale_y_continuous(labels = scales::label_percent(scale = 100), limits = ylim) +
-    labs(color = element_blank(), title = titles[i]) +theme(axis.title = element_blank())
-  })
-  output = ((sector_graphs[[1]] +theme(legend.position = 'none')) +
-    (sector_graphs[[2]] + theme(legend.position = 'none', axis.text.y = element_blank(), axis.ticks.y = element_blank())) +
-      (sector_graphs[[3]] + theme(legend.position = 'right',axis.text.y = element_blank(), axis.ticks.y = element_blank()))) +
-    plot_annotation(title = 'Trends in French Sectoral Composition') 
-  ggsave(output = 'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 output/graphs/trends in french sector composition.png')
-  
-  
+#   .[, .(firmid=siren, year, naf, "mu_cd_m_BFSR", "mu_tl_m_BFSR", "mu_cd_m_tr_BFSR", "mu_tl_m_tr_BFSR", "mu_cd_m_NoFSR", "mu_tl_m_NoFSR", "mu_cd_m_tr_NoFSR", "mu_tl_m_tr_NoFSR")]
+# firm_data <- as.data.table(read_parquet("1_firm_yr_lvl_br_dta.parquet")) %>% select(firmid, year, NACE_BR, NACE_2d_BR, nq_bar, empl_bar, nq_empl)
+# 
+# firmid_crosswalk <- read_csv("siren_firmsID_crosswalk.csv")
+# 
+# deridder_markups <- merge(deridder_markups, firmid_crosswalk, by="firmsId", all.x=T) %>% rename(firmid=siren) %>% 
+#   select(firmid, year, "mu_cd_m_FSQ",                    "mu_tl_m_FSQ"  ,                 
+#          "mu_cd_m_tr_FSQ",                 "mu_tl_m_tr_FSQ" ,                "mu_cd_m_BFSR"     ,              "mu_tl_m_BFSR"    ,               "mu_cd_m_tr_BFSR"      ,         
+#          "mu_tl_m_tr_BFSR",                "mu_cd_m_NoFSQ"   ,               "mu_tl_m_NoFSQ"    ,              "mu_cd_m_tr_NoFSQ"        ,       "mu_tl_m_tr_NoFSQ"     ,         
+#          "mu_cd_m_NoFSR",                  "mu_tl_m_NoFSR"   ,               "mu_cd_m_tr_NoFSR"   ,            "mu_tl_m_tr_NoFSR")
+# 
+
+
 #2)firm level decompositions -------------------------------------------------------------
   # 2.1 calculate decompositions  -----------------------------------------------
   ## import data 
-  
+  start = 1994
+  end = 2022
+
   # Export firm-level product data
   agg_product_data <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2c_firm_lvl_product_dta.parquet"))
   firm_yr_lvl_dta <- read_parquet('1_firm_yr_lvl_br_dta.parquet')
-  # firm_yr_lvl_dta <- fread('1_temp.csv')
+  setDT(firm_yr_lvl_dta)
+  firm_yr_lvl_dta <- firm_yr_lvl_dta[NACE_2d_BR %in% prodcom_sectors]
+  # firm_yr_lvl_dta_og <- firm_yr_lvl_dta 
+  firm_yr_lvl_dta <- unique(firm_yr_lvl_dta[, .(firmid, year, empl)])
+  firm_yr_lvl_dta <- growth_creator(firm_yr_lvl_dta, "empl", 1, c("firmid", "year"), create_born_died=T)
   
-
   ## carry out the decompositions  
     vars = c('rev', 'entrance', 'exit', 'empl') 
     data_frames = c(rep('agg_product_data',3), 'firm_yr_lvl_dta')
     dynamics <- c("growth", "reallocation")
-    end = 2022
-    for (i in 1:4){
+    for (i in 4:4){
       for(dyn in dynamics){
         ## define vars / import data 
         g = paste0(vars[i], '_', dyn); gweighted = paste0(g, '_weighted'); share= paste0(vars[i], '_share')
@@ -145,6 +127,17 @@ saveRDS(industry_comps, 'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 out
         }
         print(paste0(vars[i], " correct"))
         decompositions[,c('check_1', 'check_2','agg_l') := NULL]
+        decompositions <- decompositions[-1]
+        
+        decompositions[, agg_ma3:=zoo::rollmean(agg, k=3, fill=NA, align = "right")]
+        ggplot(decompositions, aes(x=year, y=agg_ma3)) + geom_line()+
+          scale_y_continuous(labels = scales::label_percent(scale = 100)) +
+          theme_classic() +theme(legend.position = 'bottom', axis.title.x = element_blank(),
+                                 axis.ticks.x = element_blank(), axis.title.y = element_blank(),
+                                 axis.line.x = element_blank(), legend.title = element_blank()) + 
+          labs(title =  tools::toTitleCase(paste0(vars[i], " ", dyn, " Rate - 3-year Moving Average")))+ guides(size = 'none')
+        ggsave(paste0(output_dir, vars[i], "_", dyn, "_3ma.png"), height = 6, width = 7)
+        
         
         ## for extensive margin add together entrance and exit; reshape and export  
         sub_groups = colnames(decompositions)[2:ncol(decompositions)]
@@ -193,10 +186,10 @@ saveRDS(industry_comps, 'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 out
         ybreaks = seq(floor(ylim[1]), ceiling(ylim[2]), length.out = 4)
         ybreaks = sort(c(ybreaks[abs(ybreaks)>5],0))
         
-        assign(paste0(vars[i],'_delta_decomp'), ggplot(data[sub_group %in% c('agg', 'within', 'between', 'cross','entry/exit')],
+        assign(paste0(vars[i],'_delta_decomp'), ggplot(data[sub_group %in% c('agg', 'within', 'between', 'cross','entry/exit', 'agg_ma3')],
                                                        aes(x =year, y = value*100, color = sub_group, size = sub_group)) +
                  geom_line() +
-                 scale_size_manual(values = c(1,rep(.5,4)))+
+                 scale_size_manual(values = c(1,rep(.5,5)))+
                  scale_x_continuous(limits = c(min(data$year)+1,max(data$year)), breaks = scales::breaks_pretty(5))+
                  scale_y_continuous(labels = scales::label_percent(scale = 1), limits = ylim, breaks= ybreaks) +
                  theme_classic() +theme(legend.position = 'bottom', axis.title.x = element_blank(),
@@ -206,9 +199,19 @@ saveRDS(industry_comps, 'C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/3 out
                  geom_hline(yintercept = 0, linetype = 'dashed') +
                  scale_color_hue(labels = c('agg' = 'Reallocation Rate          Decompostion:',
                                             'within'= 'within', 'between' = 'between', 
-                                            'cross' = 'cross', 'entry/exit' = 'entry/exit'))
+                                            'cross' = 'cross', 'entry/exit' = 'entry/exit', 'agg_ma3'="3-year MA"))
         )
         ggsave(paste0(output_dir, dyn, '_', vars[i],'_delta_decomp.png'), get(paste0(vars[i],'_delta_decomp')), height=5, width=9)
+        
+        ggplot(data[sub_group=="agg_ma3"], aes(x=year, y=value)) + geom_line()+
+          scale_y_continuous(labels = scales::label_percent(scale = 100)) +
+          theme_classic() +theme(legend.position = 'bottom', axis.title.x = element_blank(),
+                                 axis.ticks.x = element_blank(), axis.title.y = element_blank(),
+                                 axis.line.x = element_blank(), legend.title = element_blank()) + 
+          labs(title =  tools::toTitleCase(paste0(vars[i], " ", dyn, " Rate - 3-year Moving Average")))+ guides(size = 'none')
+        ggsave(paste0(output_dir, vars[i], "_", dyn, "_3ma.png"), height = 6, width = 7)
+        
+        
       }
     }
     
