@@ -336,6 +336,13 @@ nuts<-nuts[, c("firmid", "year", "nuts3")] %>% setkey(firmid, year) # firmid==44
 # firm_yr_lvl_br_dta<- merge(firm_yr_lvl_br_dta, nuts, by=c("firmid", "year"), all.x = T)
 firm_yr_lvl_br_dta <- nuts[firm_yr_lvl_br_dta]
 
+# Bring in markup information
+markup_data <- read_dta("dta_mu_sepcal_ficusfare_reduced_sec_year_firm_win020_p_XTABOND_andSTATA_DGM.dta") 
+setDT(markup_data)
+markup_data[, firmid:=str_pad(siren, 9, side="left", "0")]
+markup_data[, siren:=NULL]
+firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, markup_data, by=c("firmid", "year"), all.x=T)
+
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")
 write_parquet(NACE_BR_data, 'Ancillary datasets/NACE_BR_data.parquet')

@@ -69,8 +69,10 @@ industry_outcomes <- firm_yr_lvl_br_dta[
       sum(empl_bar * (young == 1), na.rm = TRUE),
       sum(empl_bar, na.rm = TRUE)
     ),
-    gross_job_reallocation = sum(empl_reallocation_weighted, na.rm = TRUE),
-    gross_sales_reallocation = sum(nq_reallocation_weighted, na.rm = TRUE),
+    gross_job_reallocation = (sum(empl_reallocation_weighted, na.rm = TRUE) / sum(empl_share, na.rm=TRUE)),
+    gross_sales_reallocation = (sum(nq_reallocation_weighted, na.rm = TRUE) / sum(nq_share, na.rm=TRUE)),
+    markup = (sum(mu_sepcal_TL_sNoFSR_t10 * within_economy_rev_share_BR, na.rm = TRUE) / sum(within_economy_rev_share_BR, na.rm=TRUE)),
+    
     sales_growth_dispersion = safe_sd(nq_growth),
     employment_growth_dispersion = safe_sd(empl_growth)
   ),
@@ -85,11 +87,35 @@ hhi <- firm_yr_lvl_br_dta[, .(
   gini = ineq::Gini(within_industry_rev_share, na.rm = TRUE)
 ), by = .(year, NACE_BR)]
 
-# Merge industry summary with HHI and tech level
-industry_data <- merge(industry_summary, hhi, by=c("year", "NACE_BR"))
-industry_data <- merge(industry_data, industry_tech, by = c("NACE_BR", "year"))
-industry_data <- merge(industry_data, industry_outcomes, by = c("NACE_BR", "year"))
 
+# Compact leader/top-N lookups and merge
+leader_top_lookup <- firm_yr_lvl_br_dta[
+  ,
+  {
+    l <- as.character(firmid[leader == 1])
+    t4 <- as.character(unique(firmid[top_4_leaders == 1]))
+    t10 <- as.character(unique(firmid[top_10_leaders == 1]))
+    competitors_BR <- as.character(unique(firmid))
+    list(
+      leader_BR = if (length(l)) l[1] else NA_character_,
+      top_4_BR = list(if (length(t4)) t4 else NA_character_),
+      top_10_BR = list(if (length(t10)) t10 else NA_character_),
+      competitors_BR = list(if (length(t10)) competitors_BR else NA_character_)
+    )
+  },
+  by = .(NACE_BR, year)
+]
+
+# Merge industry summary with HHI and tech level
+industry_data <- merge(industry_summary, hhi, by=c("year", "NACE_BR"), all.x = TRUE)
+industry_data <- merge(industry_data, industry_tech, by = c("NACE_BR", "year"), all.x = TRUE)
+industry_data <- merge(industry_data, industry_outcomes, by = c("NACE_BR", "year"), all.x = TRUE)
+industry_data <- merge(industry_data, leader_top_lookup, by = c("NACE_BR", "year"), all.x = TRUE)
+
+
+industry_data <- industry_data[substr(NACE_BR, 1, 2) %in% prodcom_sectors]
 
 # output parquet
 write_parquet(industry_data, "5_industry_yr_lvl_dta.parquet")
+
+# ggplot(industry_data[n_firms_in_industry>1], aes(x=n_firms_in_industry, y=gross_job_reallocation)) + geom_point(alpha=0.1)
