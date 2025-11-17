@@ -28,7 +28,9 @@ industry_tech[,high_tech := tech_level <3]
 industry_tech[,low_tech := !high_tech]
 
 # summarize br variables to industry-year level 
-industry_summary <- firm_yr_lvl_br_dta[, .(
+industry_summary <- firm_yr_lvl_br_dta[
+  !is.na(NACE_BR),
+  .(
   n_firms_in_industry  = .N,
   total_nq = sum(nq, na.rm=T),
   total_empl = sum(empl, na.rm=T),
@@ -51,6 +53,31 @@ industry_summary <- firm_yr_lvl_br_dta[, .(
     }
 ), by = .(year, NACE_BR)]
 
+# Create industry dynamism measures
+share_capital_costs <- 0.08
+industry_outcomes <- firm_yr_lvl_br_dta[
+  !is.na(NACE_BR),
+  .(
+    labor_share = safe_ratio(sum(labor_cost, na.rm = TRUE), sum(nq, na.rm = TRUE)),
+    profit_share = safe_ratio(
+      sum(nq - labor_cost - raw_materials - share_capital_costs * capital, na.rm = TRUE),
+      sum(nq, na.rm = TRUE)
+    ),
+    entry_rate = safe_mean(as.integer(born)),
+    exit_rate = safe_mean(as.integer(died)),
+    young_employment_share = safe_ratio(
+      sum(empl_bar * (young == 1), na.rm = TRUE),
+      sum(empl_bar, na.rm = TRUE)
+    ),
+    gross_job_reallocation = sum(empl_reallocation_weighted, na.rm = TRUE),
+    gross_sales_reallocation = sum(nq_reallocation_weighted, na.rm = TRUE),
+    sales_growth_dispersion = safe_sd(nq_growth),
+    employment_growth_dispersion = safe_sd(empl_growth)
+  ),
+  by = .(NACE_BR, year)
+]
+
+
 #Calculate industry HHI and Gini
 firm_yr_lvl_br_dta[, market_share_squared := within_industry_rev_share^2]
 hhi <- firm_yr_lvl_br_dta[, .(
@@ -61,6 +88,8 @@ hhi <- firm_yr_lvl_br_dta[, .(
 # Merge industry summary with HHI and tech level
 industry_data <- merge(industry_summary, hhi, by=c("year", "NACE_BR"))
 industry_data <- merge(industry_data, industry_tech, by = c("NACE_BR", "year"))
+industry_data <- merge(industry_data, industry_outcomes, by = c("NACE_BR", "year"))
+
 
 # output parquet
 write_parquet(industry_data, "5_industry_yr_lvl_dta.parquet")

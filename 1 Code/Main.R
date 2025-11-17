@@ -8,13 +8,15 @@ options(
 )
 
 
-packages = c('data.table', 'haven', 'readxl', 'openxlsx','stringr', 'readr', 'dplyr', 
-             'tidyverse', 'zoo', 'reshape2','rstudioapi', "plm", 'foreign', "fixest", 
-             'data.table', 'haven', 'stringr', 'readr', 'dplyr',
+packages = c('data.table', 'haven', 'readxl', 'openxlsx', 'readr', 'dplyr', 
+             'tidyverse', 'zoo', 'reshape2','rstudioapi', "plm", 'foreign', 
+             'haven', 'stringr', 'readr', 'dplyr',
              'ggplot2', 'tidyverse', 'rstudioapi', 'zoo', 'reshape2',
-             'patchwork', 'latex2exp', "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom", "fixest",
-             "xtable", "arrow", "tools", "marginaleffects",
+             'patchwork', 'latex2exp', "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom", 
+             "xtable", "arrow", "tools", "marginaleffects", "purrr",
              "AER", "fixest", "lfe", "lintr", "httr", "jsonlite", "ineq")
+
+
 installed_packages <- packages %in% rownames(installed.packages())
 if (any(installed_packages == FALSE)) {
   install.packages(packages[!installed_packages])
@@ -74,6 +76,25 @@ source(paste0(tools_dir, "core_switch_product.R"))
 source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
 source(paste0(tools_dir, "create_lags.R"))
 source(paste0(tools_dir, "winsorize.R"))
+
+safe_mean <- function(x) ifelse(all(is.na(x)), NA_real_, mean(x, na.rm = TRUE))
+safe_median <- function(x) ifelse(all(is.na(x)), NA_real_, median(x, na.rm = TRUE))
+safe_sd <- function(x) ifelse(sum(!is.na(x)) <= 1, NA_real_, sd(x, na.rm = TRUE))
+safe_quant <- function(x, probs) ifelse(all(is.na(x)), NA_real_, quantile(x, probs, na.rm = TRUE, type = 7))
+safe_ratio <- function(num, den) ifelse(is.na(den) | den == 0, NA_real_, num / den)
+
+load_dataset <- function(path_candidates, reader, ...) {
+  existing_path <- purrr::detect(path_candidates, file.exists)
+  if (is.null(existing_path)) {
+    stop(paste("None of the candidate files exist:", paste(path_candidates, collapse = ", ")))
+  }
+  reader(existing_path, ...)
+}
+
+to_dt <- function(obj) as.data.table(obj)
+
+
+
 
 
 

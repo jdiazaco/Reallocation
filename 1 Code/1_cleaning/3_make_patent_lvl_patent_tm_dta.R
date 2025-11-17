@@ -5,6 +5,9 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 patentsight_inpi_folder <- "patent_data/PatentSight_Export_2025-10-01-15-38-299"
 patentsight_alex_folder <- "patent_data/alex_patents"
 ipc_info_folder <- "patent_data/ipc_information"
+prior_art_folder <- "patent_data/prior_art/"
+ownerid_path <-"patent_data/owner_ids/"
+
 
 # 1) INPI patent data cleaning ------------------------------------------------------
 
@@ -350,7 +353,6 @@ openxlsx::write.xlsx(test2, "patent_data/patent_prodcom_likelihoods.xlsx")
 # Read prior art data
 patent_data <- read_parquet("3_patent_lvl_patent_dta.parquet")
 
-prior_art_folder <- "patent_data/prior_art/"
 
 # Unzip all zip files in the prior art folder
 zip_files <- list.files(prior_art_folder, pattern = "\\.zip$", full.names = TRUE)
@@ -376,6 +378,7 @@ prior_art_list <- lapply(csv_files_prior_art, function(f) {
   # names(dt)[names(dt)=="prior_art_(owner_and_document_number)"] <- "prior_art"
   dt <- dt[, .(patent_family, `prior_art_(owner_and_document_number)`)]
   dt[, prior_art := gsub("\\s+", "", sub(".*\\(([^ ]+).*", "\\1", `prior_art_(owner_and_document_number)`))] # Extract patent number before 'et al' and remove spaces
+  dt[, owner_prior_art := sub("\\s*\\(.*", "", `prior_art_(owner_and_document_number)`)]
   
   # dt <- rbindlist(prior_art_list, use.names = TRUE, fill = TRUE)
   dt <- unique(dt)
@@ -563,3 +566,28 @@ patent_source <- fread("patent_data/patent_families_per_source.csv")
 
 
 
+
+# 8) Owner ID analysis
+
+# List all CSV files in the folder
+csv_files <- list.files(
+  ownerid_path,
+  pattern = "\\.csv$", full.names = TRUE
+)
+
+# Read all CSV files, skipping first 8 lines, and process control1 columns
+ownerid_list <- lapply(csv_files, function(f) {
+  dt <- as.data.table(read_csv(f, skip = 8))
+  # dt[, control1 := fifelse(
+  #   control1 == "<unknown>" & control1_round2 != "<unknown>", control1_round2,
+  #   fifelse(control1 == "<unknown>" & control1_round2 == "<unknown>", NA_character_, control1)
+  # )]
+  # dt[, control1_round2 := NULL]
+  return(dt)
+})
+
+ownerid_data <- rbindlist(ownerid_list, use.names = TRUE, fill = TRUE)
+ownerid_data <- unique(ownerid_data[, .(owner_id=`Owner ID`,
+                                        owner_name=Owner)])
+
+fwrite(ownerid_data, paste0(ownerid_path, "cleaned_unique_ownerid.csv"))
