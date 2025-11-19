@@ -464,19 +464,66 @@ prior_art_folder <- "patent_data/prior_art/"
 # 5.3 Process citation information dataset
 {
   prior_art_dt <- as.data.table(read_rds(paste0(prior_art_folder, "prior_art_cite_temp.RDS")))
+
+  # show rows where firms_in_pc is not NULL / not empty / not NA
+  non_null <- sapply(prior_art_dt$firms_in_pc, function(x) !(is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))))
+  View(prior_art_dt[non_null])
   
   # View(prior_art_dt[patent_family=="EP2549788.A1"])
   
-  prior_art_dt[, `:=`(
-    cite_leaders_PC_dummy = mapply(a_in_b_dt, firmid_prior, leaders, USE.NAMES = FALSE),
-    # cite_top_4_PC_dummy = mapply(a_in_b_dt, firmid_prior, top_4_leaders, USE.NAMES = FALSE),
-    cite_top_10_PC_dummy = mapply(a_in_b_dt, firmid_prior, top_10_leaders, USE.NAMES = FALSE),
-    cite_competitors_PC_dummy = mapply(a_in_b_dt, firmid_prior, firms_in_pc, USE.NAMES = FALSE),
-    cite_leaders_BR_dummy = mapply(a_in_b_dt, firmid_prior, leader_BR, USE.NAMES = FALSE),
-    # cite_top_4_BR_dummy = mapply(a_in_b_dt, firmid_prior, top_4_BR, USE.NAMES = FALSE),
-    cite_top_10_BR_dummy = mapply(a_in_b_dt, firmid_prior, top_10_BR, USE.NAMES = FALSE)
-    # cite_competitors_BR_dummy = mapply(a_in_b_dt, firmid_prior, competitors_BR, USE.NAMES = FALSE)
-  )]
+  # vectorised, data.table-friendly replacement for the mapply block
+  # mapping: new_column_name -> list-column-to-check
+  cols_map <- list(
+    cite_leaders_PC_dummy      = "leaders",
+    cite_top_4_PC_dummy       = "top_4_leaders",
+    cite_top_10_PC_dummy      = "top_10_leaders",
+    cite_competitors_PC_dummy = "firms_in_pc",
+    cite_leaders_BR_dummy     = "leader_BR",
+    cite_top_4_BR_dummy       = "top_4_BR",
+    cite_top_10_BR_dummy      = "top_10_BR",
+    cite_competitors_BR_dummy = "competitors_BR"
+  )
+
+  # ensure prior_art_dt is a data.table and the target list-cols are lists per row
+  setDT(prior_art_dt)
+  for (lc in unique(unname(cols_map))) {
+    if (!is.list(prior_art_dt[[lc]])) {
+      # wrap scalars/NA into 1-element lists so lengths() / unlist() behave consistently
+      prior_art_dt[[lc]] <- as.list(prior_art_dt[[lc]])
+    }
+  }
+
+  # helper: create logical vector fast by unnesting only non-empty rows and comparing by index
+  make_dummy <- function(dt, listcol, priorcol = "firmid_prior") {
+    n <- nrow(dt)
+    out <- rep(FALSE, n)
+
+    # indices with non-empty list and non-NA prior
+    valid_idx <- which(lengths(dt[[listcol]]) > 0 & !is.na(dt[[priorcol]]))
+
+    if (length(valid_idx) == 0) return(out)
+
+    # unnest only valid rows
+    rep_idx <- rep(valid_idx, lengths(dt[[listcol]][valid_idx]))
+    members <- unlist(dt[[listcol]][valid_idx], use.names = FALSE)
+
+    # compare members to the corresponding firmid_prior (vectorised)
+    prior_values <- dt[[priorcol]][rep_idx]
+    matches <- members == prior_values
+
+    if (any(matches)) out[unique(rep_idx[matches])] <- TRUE
+    return(out)
+  }
+
+  # compute and assign all dummy columns
+  for (newcol in names(cols_map)) {
+    listcol <- cols_map[[newcol]]
+    prior_art_dt[, (newcol) := make_dummy(.SD, listcol, "firmid_prior"), .SDcols = names(prior_art_dt)[1]] 
+    # note: .SD is only used to pass dt into make_dummy; the function reads dt by reference
+  }
+
+  # Optionally convert logical -> integer (0/1) if you prefer numeric columns
+  # prior_art_dt[, (names(cols_map)) := lapply(.SD, as.integer), .SDcols = names(cols_map)]
   
   write_rds(prior_art_dt, paste0(prior_art_folder, "prior_art_cite_temp2.RDS"))
   
@@ -688,6 +735,32 @@ overlap <- merge(inpi_patent_records[, .(siren=siren_list, app_n=key_appln_nr)],
 
 
 patent_source <- fread("patent_data/patent_families_per_source.csv")
+
+
+# 8) Owner ID analysis
+
+# List all CSV files in the folder
+csv_files <- list.files(
+  ownerid_path,
+  pattern = "\\.csv$", full.names = TRUE
+)
+
+# Read all CSV files, skipping first 8 lines, and process control1 columns
+ownerid_list <- lapply(csv_files, function(f) {
+  dt <- as.data.table(read_csv(f, skip = 8))
+  # dt[, control1 := fifelse(
+  #   control1 == "<unknown>" & control1_round2 != "<unknown>", control1_round2,
+  #   fifelse(control1 == "<unknown>" & control1_round2 == "<unknown>", NA_character_, control1)
+  # )]
+  # dt[, control1_round2 := NULL]
+  return(dt)
+})
+
+ownerid_data <- rbindlist(ownerid_list, use.names = TRUE, fill = TRUE)
+ownerid_data <- unique(ownerid_data[, .(owner_id=`Owner ID`,
+                                        owner_name=Owner)])
+
+fwrite(ownerid_data, paste0(ownerid_path, "cleaned_unique_ownerid.csv"))
 
 
 

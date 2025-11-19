@@ -308,7 +308,7 @@ product_data <- merge(product_data %>% select(-c(leader, top_4_leaders, top_10_l
 product_firm_data <- product_data[, .(leaders=list(unique(unlist(leader))),
                                       top_4_leaders=list(unique(unlist(top_4_leaders))),
                                       top_10_leaders=list(unique(unlist(top_10_leaders))),
-                                      firms_in_pc=list(unique(unlist(firms_in_pc[firms_in_pc!=firmid])))), by=.(firmid, year)]
+                                      firms_in_pc=list(unique(unlist(firms_in_pc)))), by=.(firmid, year)]
 
 write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_product_competitors_dta.RDS"))
 

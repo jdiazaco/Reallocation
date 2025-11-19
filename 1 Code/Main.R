@@ -73,7 +73,7 @@ source(paste0(tools_dir, "create_formulas.R"))
 source(paste0(tools_dir, "regression_innovation_growth.R"))
 source(paste0(tools_dir, "remove_special_chars.R"))
 source(paste0(tools_dir, "core_switch_product.R"))
-source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
+# source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
 source(paste0(tools_dir, "create_lags.R"))
 source(paste0(tools_dir, "winsorize.R"))
 
@@ -93,18 +93,43 @@ load_dataset <- function(path_candidates, reader, ...) {
 
 to_dt <- function(obj) as.data.table(obj)
 
+# Jaccard similarity between firmid_prior_list and leader/top lists
+jaccard <- function(a, b) {
+  a <- unique(as.character(unlist(a)))
+  b <- unique(as.character(unlist(b)))
+  a <- a[!is.na(a) & a != "" & a != "unknown"]
+  b <- b[!is.na(b) & b != "" & b != "unknown"]
+  if (length(a) == 0 && length(b) == 0) return(NA_real_)
+  if (length(a) == 0) return(0)
+  if (length(b) == 0) return(NA_real_)
+  inter <- length(intersect(a, b))
+  union <- length(unique(c(a, b)))
+  if (union == 0) return(NA_real_)
+  inter / union
+}
 
 
-
-
-
+a_in_b_dt <- function(a, b) {
+  a <- unique(as.character(unlist(a)))
+  b <- unique(as.character(unlist(b)))
+  a <- a[!is.na(a) & a != "" & a != "unknown"]
+  b <- b[!is.na(b) & b != "" & b != "unknown"]
+  # if (length(a) == 0 && length(b) == 0) return(NA_real_)
+  if (length(a) == 0) return(0)
+  if (length(b) == 0) return(NA_real_)
+  inter <- length(intersect(a, b))
+  union <- length(unique(c(a, b)))
+  if (union == 0) return(NA_real_)
+  if (inter > 0) return(1)
+}
 
 
 # source("C:/Users/Public/1. Microprod/1. Microprod-H2020/NEW_INFRASTRUCTURE/Infra/Rtools/nace_conc.R")
 
-
 # set up directories 
-raw_dir = "C:/Users/Public/1. Microprod/0. Raw data processing/Data/"
+raw_dir = "C:/Users/NEWPROD_J_DIAZ-AC/Documents/Raw_data/Data/"
+birth_death_path = "firm_lists/firm_birth_death.parquet"
+
 setwd(paste0(main_dir, '2 Data/'))
 output_dir<-paste0(main_dir, "3 Output/")
 
@@ -126,7 +151,7 @@ source(paste0(code_dir, ".lintr.R"))
 lint(paste0(code_dir, ".lintr.R"))
 
 # Define level of aggregation for product level data
-cpa_or_pf <- "prodfra_plus" # Options: "cpa", "prodfra_plus", "prodcom", "NACE_4d_pf", "NACE_2d_pf"
+cpa_or_pf <- "prodcom" # Options: "cpa", "prodfra_plus", "prodcom", "NACE_4d_pf", "NACE_2d_pf"
 agg_levels <- list(
   prodfra_plus  = list(ext = "_prodfra_plus",digits = c(0,1,2,4,6,8,10), exit_digit = "exit_10"),
   prodcom       = list(ext = "_prodcom",    digits = c(0,1,2,4,6,8),     exit_digit = "exit_8"),
@@ -143,8 +168,16 @@ exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
 # These are oil manufacturing, public utilities, water supply, sewerage, waste management and remediation activities,
 # and activities of households as employers; undifferentiated goods- and services-producing activities of households for own use; activities of extraterritorial organizations and bodies
   ind_to_exclude <- c(19,35,36,37,38,39,46) 
+  
+  # prodcom_sectors <- c("07", "08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
+  #                      "26", "27", "28", "29", "30", "31", "32", "33", "42", "43", "45", "47", "58", "68", "70", 
+  #                      "71", "72", "73", "77", "82", "95", "96")
+  
+  prodcom_sectors <- c("08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
+                       "26", "27", "28", "29", "30", "31", "32", "33")
+  
+  
 
 
-
-output_dir <- paste0(output_dir, "2025/Export 16.10/")
+output_dir <- paste0(output_dir, "2025/Export 13.11/")
 output_dir_creator(output_dir)

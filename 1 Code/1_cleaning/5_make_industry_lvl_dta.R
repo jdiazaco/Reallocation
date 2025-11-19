@@ -113,9 +113,11 @@ industry_data <- merge(industry_data, industry_outcomes, by = c("NACE_BR", "year
 industry_data <- merge(industry_data, leader_top_lookup, by = c("NACE_BR", "year"), all.x = TRUE)
 
 
-industry_data <- industry_data[substr(NACE_BR, 1, 2) %in% prodcom_sectors]
+# industry_data <- industry_data[substr(NACE_BR, 1, 2) %in% prodcom_sectors]
 
 # output parquet
 write_parquet(industry_data, "5_industry_yr_lvl_dta.parquet")
+
+
 
 # ggplot(industry_data[n_firms_in_industry>1], aes(x=n_firms_in_industry, y=gross_job_reallocation)) + geom_point(alpha=0.1)

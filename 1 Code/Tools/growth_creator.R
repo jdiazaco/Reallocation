@@ -11,7 +11,7 @@ growth_creator<-function(data, normal_cols, n_lag, by_vars=c('firmid','year'), c
   # }
 
   if (!(all(c("consolidated_birth_year", "economic_birth_year", "legal_birth_year", "economic_death_year") %in% colnames(data)))) {
-    birth_death <- read_parquet("1a_firm_birth_death.parquet")
+    birth_death <- read_parquet(birth_death_path)
     data <- merge(data, birth_death, by = "firmid", all.x = T)
   }
 

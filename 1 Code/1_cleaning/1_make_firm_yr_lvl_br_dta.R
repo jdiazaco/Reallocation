@@ -11,6 +11,7 @@ filter_min_n_employees <- 1
 # raw_dir<-raw_dir_public
 
 if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  
   firm_yr_lvl_br_dta = setDT(readRDS("sbs_br_combined.rds")) %>%
     rename(
       economic_birth_year = birth_year, economic_death_year = death_year,
@@ -18,6 +19,24 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     ) %>%
     .[, `:=`(economic_birth_year = min(year), economic_death_year = max(year)), by = firmid] %>%
     .[, NACE_2d_BR := substr(NACE_BR, 1, 2)]
+  
+  patent_data <- load_dataset(
+    c("3_patent_lvl_patent_dta.parquet", "patent_data/3_patent_lvl_patent_dta.parquet"),
+    read_parquet
+  ) |> to_dt()
+  
+  v1 <- unique(as.character(firm_yr_lvl_br_dta$firmid)) %>% sort() %>% na.omit()
+  v2 <- unique(as.character(patent_data$firmid)) %>% sort() %>% na.omit()
+  n <- max(length(v1), length(v2))
+  v1 <- c(v1, rep(NA, n - length(v1)))
+  v2 <- c(v2, rep(NA, n - length(v2)))
+  test <- data.table(
+    firmid_product_data = as.numeric(v1),
+    firmid_patent_data = v2
+  )
+  
+  firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, test, by.x="firmid", by.y="firmid_product_data", all.x=TRUE) %>%
+    .[, firmid:=as.character(firmid_patent_data)] %>% .[ , firmid_patent_data:=NULL]
   
 } else {
   ## import BR data
@@ -115,7 +134,7 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
 }
 
 fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
-firm_yr_lvl_br_dta <- fread("1_temp.csv")
+firm_yr_lvl_br_dta <- read_csv("1_temp.csv") |> to_dt()
 setkey(firm_yr_lvl_br_dta, firmid, year)
 
 # Create age and young indicators
@@ -337,11 +356,17 @@ nuts<-nuts[, c("firmid", "year", "nuts3")] %>% setkey(firmid, year) # firmid==44
 firm_yr_lvl_br_dta <- nuts[firm_yr_lvl_br_dta]
 
 # Bring in markup information
-markup_data <- read_dta("dta_mu_sepcal_ficusfare_reduced_sec_year_firm_win020_p_XTABOND_andSTATA_DGM.dta") 
-setDT(markup_data)
-markup_data[, firmid:=str_pad(siren, 9, side="left", "0")]
-markup_data[, siren:=NULL]
-firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, markup_data, by=c("firmid", "year"), all.x=T)
+if(grepl("Drive", getwd())){
+  # create variable mu_sepcal_TL_sNoFSR_t10 sampling from 0.5 to 2
+  firm_yr_lvl_br_dta[, mu_sepcal_TL_sNoFSR_t10 := runif(.N, min = 0.5, max = 2)]
+} else {
+  markup_data <- read_dta("dta_mu_sepcal_ficusfare_reduced_sec_year_firm_win020_p_XTABOND_andSTATA_DGM.dta") 
+  setDT(markup_data)
+  markup_data[, firmid:=str_pad(siren, 9, side="left", "0")]
+  markup_data[, siren:=NULL]
+  firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, markup_data, by=c("firmid", "year"), all.x=T)
+  
+}
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom
 write_parquet(firm_yr_lvl_br_dta, "1_firm_yr_lvl_br_dta.parquet")

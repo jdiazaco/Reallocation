@@ -15,10 +15,10 @@ parameters(prodfra_or_pcc8, only_prodfra_in_prodcom)
 
 ## import supplementary data
 harmonized_prodfra = fread(paste0("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/2 Data/product_harmonization_output/harmonized codes/prodfra_harmonized_2009to2023_", prodfra_or_pcc8, ".csv"))
-active_firm_list = read_parquet("1a_active_firm_list.parquet")
-birth_death = read_parquet("1a_firm_birth_death.parquet")
+active_firm_list = read_parquet("firm_lists/active_firm_list.parquet")
+birth_death = read_parquet("firm_lists/firm_birth_death.parquet")
 NACE_BR_data <- read_parquet("Ancillary datasets/NACE_BR_data.parquet")
-firmid_keys<-fread("firm_lists/firmid_keys.csv")
+# firmid_keys<-fread("firm_lists/firmid_keys.csv")
 # nace_DEFind <- fread("nace_DEFind.conc", colClasses = c("character"))
 
 #Juli?n: Pc8_entry_year
@@ -92,6 +92,28 @@ product_data[, sold_q:=sold_q*factor]
 # # Bring in product_data
 # # product_data <- readRDS(paste0("product_data_", filter_indicator, "_.RDS"))
 # product_data <- setDT(readRDS(paste0("product_data_10_digit_all_prodfra_.RDS")))
+
+if(grepl("Drive", getwd())){
+  product_data <- readRDS(paste0("product_data_", filter_indicator, "_.RDS"))
+  patent_data <- load_dataset(
+    c("3_patent_lvl_patent_dta.parquet", "patent_data/3_patent_lvl_patent_dta.parquet"),
+    read_parquet
+  ) |> to_dt()
+  
+  v1 <- unique(as.character(product_data$firmid)) %>% sort() %>% na.omit()
+  v2 <- unique(as.character(patent_data$firmid)) %>% sort() %>% na.omit()
+  n <- max(length(v1), length(v2))
+  v1 <- c(v1, rep(NA, n - length(v1)))
+  v2 <- c(v2, rep(NA, n - length(v2)))
+  test <- data.table(
+    firmid_product_data = as.numeric(v1),
+    firmid_patent_data = v2
+  )
+  
+  product_data <- merge(product_data, test, by.x="firmid", by.y="firmid_product_data", all.x=TRUE) %>%
+    .[, firmid:=firmid_patent_data] %>% .[ , firmid_patent_data:=NULL]
+}
+
 
 # Create product codes at different aggregation levels
 product_data[, `:=`(
