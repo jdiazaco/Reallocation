@@ -11,7 +11,6 @@ filter_min_n_employees <- 1
 # raw_dir<-raw_dir_public
 
 if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
-  
   firm_yr_lvl_br_dta = setDT(readRDS("sbs_br_combined.rds")) %>%
     rename(
       economic_birth_year = birth_year, economic_death_year = death_year,
@@ -133,8 +132,14 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   
 }
 
+{
+  firm_yr_lvl_br_dta <- read_csv("ficusfare_profil_wof_19942019_v0222.csv")
+  test <- fread("1_temp.csv")
+  
+}
+
 fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
-firm_yr_lvl_br_dta <- read_csv("1_temp.csv") |> to_dt()
+firm_yr_lvl_br_dta <- fread("1_temp.csv")
 setkey(firm_yr_lvl_br_dta, firmid, year)
 
 # Create age and young indicators

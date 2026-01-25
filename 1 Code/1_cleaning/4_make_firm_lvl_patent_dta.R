@@ -225,3 +225,48 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
   write_rds(firm_lvl_patent_data, "4b_patenting_products_firm_level.rds")
 }
 
+# b) Trademark information
+
+{
+  # tm_data <- read_parquet("tm_patent/tm_record_level_final.parquet")
+  tm_data <- as.data.table(read_parquet("tm_data/siren_level_patent_and_tm_final.parquet")) %>% .[
+    , .(firmid=siren, year=application_year, num_tm)
+  ]
+  
+  # Use tm_data instead of patent_lvl_data
+  filings_per_year_tm <- tm_data[, .(num_tm = sum(num_tm, na.rm = TRUE)), by = .(firmid, filing_year = year)]
+
+  full_panel <- CJ(firmid = unique(tm_data$firmid), filing_year = max(1980, min(filings_per_year_tm$filing_year, na.rm = TRUE)):2022)
+
+  # Merge with the trademark data to fill missing years with NA
+  firm_lvl_tm_data <- merge(full_panel, filings_per_year_tm, by = c("firmid", "filing_year"), all.x = TRUE)
+
+  setorder(firm_lvl_tm_data, firmid, filing_year)
+
+  # Treat NA as 0 and compute cumulative totals for trademarks
+  firm_lvl_tm_data[, num_tm := fifelse(is.na(num_tm), 0, num_tm)]
+  firm_lvl_tm_data[, total_tm := cumsum(num_tm), by = firmid]
+
+  # Create dummies and rename filing_year -> year to match downstream code
+  firm_lvl_tm_data <- firm_lvl_tm_data[!is.na(firmid)][
+    , `:=`(
+      tm_dummy = as.integer(num_tm > 0)
+    )
+  ]
+  firm_lvl_tm_data <- firm_lvl_tm_data %>% rename(year = filing_year)
+
+  # Growth for total_tm
+  start <- 1980
+  end <- 2022
+  
+  growth <- growth_creator(firm_lvl_tm_data, "total_tm", 1)[, .(firmid, year, growth = get("total_tm_growth"))]
+  setnames(growth, "growth", "total_tm_growth")
+  firm_lvl_tm_data <- merge(firm_lvl_tm_data, growth, by = c("firmid", "year"), all.x = TRUE)
+
+  # Window for trademark dummy (using existing window_length)
+  window_length <- 2
+  firm_lvl_tm_data <- window_var_cretor(firm_lvl_tm_data, "firmid", "year", "tm_dummy", window_length, 0, "tm_dummy_window", na_rm = TRUE)
+  firm_lvl_tm_data[, ever_tm := as.numeric(any(tm_dummy)), by = firmid]
+  write_rds(firm_lvl_tm_data, "4c_tm_firm_level.rds")
+  
+}

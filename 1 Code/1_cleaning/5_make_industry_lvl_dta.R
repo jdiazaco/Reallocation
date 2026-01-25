@@ -27,6 +27,15 @@ industry_tech[ as.numeric(str_sub(NACE_BR,1,3)) == 351 & NACE_version == 1.1, te
 industry_tech[,high_tech := tech_level <3]
 industry_tech[,low_tech := !high_tech]
 
+deridder_markups[, rev_share:=nq_bar/sum(nq, na.rm=T), by=year]
+deridder_markups[, paste0(cols, "_weighted") :=  lapply(.SD, function(x) x*rev_share), .SDcols = cols]
+deridder_markups_collapsed <- deridder_markups[, lapply(.SD, sum, na.rm=T), by=year, .SDcols = cols_weighted]
+
+
+test <- firm_yr_lvl_br_dta[, .(rs=sum(within_industry_rev_share, na.rm=T),
+                               n=.N), by=.(NACE_BR, year)]
+hist(test$rs)
+
 # summarize br variables to industry-year level 
 industry_summary <- firm_yr_lvl_br_dta[
   !is.na(NACE_BR),
@@ -35,6 +44,7 @@ industry_summary <- firm_yr_lvl_br_dta[
   total_nq = sum(nq, na.rm=T),
   total_empl = sum(empl, na.rm=T),
   av_firm_size_empl = mean(empl, na.rm = TRUE),
+  industry_markup = sum(mu_sepcal_TL_sBFSR_t10*within_industry_rev_share, na.rm=T)/sum(within_industry_rev_share, na.rm=T),
   median_firm_size_empl = median(empl, na.rm = TRUE),
   av_firm_size_nq = mean(nq, na.rm = TRUE),
   median_firm_size_nq = median(nq, na.rm = TRUE),
@@ -117,7 +127,5 @@ industry_data <- merge(industry_data, leader_top_lookup, by = c("NACE_BR", "year
 
 # output parquet
 write_parquet(industry_data, "5_industry_yr_lvl_dta.parquet")
-
-
 
 # ggplot(industry_data[n_firms_in_industry>1], aes(x=n_firms_in_industry, y=gross_job_reallocation)) + geom_point(alpha=0.1)
