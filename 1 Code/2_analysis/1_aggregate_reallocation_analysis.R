@@ -3,21 +3,20 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 
 # deridder_markups <- read_dta("deridder_markups.dta")
 deridder_markups <- read_parquet("1_firm_yr_lvl_br_dta.parquet")
+deridder_markups <- deridder_markups %>% select(firmid, year,  
+                                                mu_sepcal_TL_sBFSR_t1, mu_sepcal_CD_sBFSR_t1, mu_sepcal_TL_sBFSR_t8, mu_sepcal_CD_sBFSR_t8,
+                                                mu_sepcal_TL_sBFSR_t10, mu_sepcal_CD_sBFSR_t10, mu_sepcal_TL_sNoFSR_t1, mu_sepcal_CD_sNoFSR_t1,
+                                                mu_sepcal_TL_sNoFSR_t8, mu_sepcal_CD_sNoFSR_t8, mu_sepcal_TL_sNoFSR_t10, mu_sepcal_CD_sNoFSR_t10,
+                                                NACE_BR, NACE_2d_BR, nq, nq_bar, empl_bar, nq_empl, within_economy_rev_share_BR)
+deridder_markups <- deridder_markups %>% filter(NACE_2d_BR %in% prodcom_sectors)
 setDT(deridder_markups)
-deridder_markups <- deridder_markups[NACE_2d_BR %in% prodcom_sectors]
-deridder_markups <- deridder_markups[,  .(firmid, year,  
-                                          mu_sepcal_TL_sBFSR_t1, mu_sepcal_CD_sBFSR_t1, mu_sepcal_TL_sBFSR_t8, mu_sepcal_CD_sBFSR_t8,
-                                          mu_sepcal_TL_sBFSR_t10, mu_sepcal_CD_sBFSR_t10, mu_sepcal_TL_sNoFSR_t1, mu_sepcal_CD_sNoFSR_t1,
-                                          mu_sepcal_TL_sNoFSR_t8, mu_sepcal_CD_sNoFSR_t8, mu_sepcal_TL_sNoFSR_t10, mu_sepcal_CD_sNoFSR_t10,
-                                          NACE_BR, NACE_2d_BR, nq_bar, empl_bar, nq_empl, within_economy_rev_share_BR)]
-gc()
 
 cols <- c("mu_sepcal_TL_sBFSR_t1", "mu_sepcal_CD_sBFSR_t1", "mu_sepcal_TL_sBFSR_t8", "mu_sepcal_CD_sBFSR_t8",
           "mu_sepcal_TL_sBFSR_t10", "mu_sepcal_CD_sBFSR_t10", "mu_sepcal_TL_sNoFSR_t1", "mu_sepcal_CD_sNoFSR_t1",
           "mu_sepcal_TL_sNoFSR_t8", "mu_sepcal_CD_sNoFSR_t8", "mu_sepcal_TL_sNoFSR_t10", "mu_sepcal_CD_sNoFSR_t10")
 cols_weighted <- paste(cols, "_weighted", sep="")
 
-deridder_markups[, rev_share:=nq_bar/sum(nq_bar, na.rm=T), by=year]
+deridder_markups[, rev_share:=nq/sum(nq, na.rm=T), by=year]
 deridder_markups[, paste0(cols, "_weighted") :=  lapply(.SD, function(x) x*rev_share), .SDcols = cols]
 deridder_markups_collapsed <- deridder_markups[, lapply(.SD, sum, na.rm=T), by=year, .SDcols = cols_weighted]
 
@@ -67,7 +66,7 @@ for(col in cols_weighted){
     vars = c('rev', 'entrance', 'exit', 'empl') 
     data_frames = c(rep('agg_product_data',3), 'firm_yr_lvl_dta')
     dynamics <- c("growth", "reallocation")
-    for (i in 4:4){
+    for (i in 1:4){
       for(dyn in dynamics){
         ## define vars / import data 
         g = paste0(vars[i], '_', dyn); gweighted = paste0(g, '_weighted'); share= paste0(vars[i], '_share')
@@ -146,6 +145,35 @@ for(col in cols_weighted){
         }else if(vars[i]== 'exit'){
           exit = decompositions
           products = merge(entrance, exit, by = 'year')
+          
+          products_plot = merge(entrance, exit, by = 'year', suffix=c("_entrance", "_exit")) %>%
+            .[, total:=agg_entrance + agg_exit] %>%
+            pivot_longer(cols=c("agg_entrance", "agg_exit"),
+                         names_to = "type",
+                         names_prefix="agg_",
+                         values_to="value")
+          
+          
+          ggplot(products_plot, aes(x=year))+ 
+            geom_col( aes(y=value, fill=type)) +
+            geom_line( aes(y=total, colour="Aggregate")) + 
+            # scale_size_manual(values = c(1,rep(.5,5)))+
+            # scale_x_continuous(limits = c(min(data$year)+1,max(data$year)), breaks = scales::breaks_pretty(5))+
+            # scale_y_continuous(labels = scales::label_percent(scale = 1), limits = ylim, breaks= ybreaks) +
+            theme_classic() +theme(legend.position = 'bottom', axis.title.x = element_blank(),
+                                   axis.ticks.x = element_blank(), axis.title.y = element_blank(),
+                                   axis.line.x = element_blank()) + 
+            labs(title =  "Decomposition of Product Reallocation Rate by Component",
+                 fill="Component", colour="")+ 
+            scale_fill_manual(values=c("entrance" = "#1B9E77",
+                                       "exit" = "#D95F02"))+
+            scale_colour_manual(values=c("Aggregate" = "black"))
+          ggsave(paste0(output_dir, dyn, '_', vars[i],'_product.png'), height=5, width=9)
+
+          
+
+          
+          
           for (j in seq_along(sub_groups)){
             x = paste0(sub_groups[j], '.x')
             y = paste0(sub_groups[j], '.y')

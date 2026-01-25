@@ -11,6 +11,7 @@
 
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
 
+
 analysis_output_dir <- file.path(output_dir, "knowledge_diffusion", format(Sys.Date(), "%Y%m%d"))
 output_dir_creator(analysis_output_dir)
 
@@ -542,32 +543,42 @@ industry_outcomes <- merge(
 # ------------------------------------------------------------------------------
 
 analysis_panel <- merge(industry_outcomes, citation_industry, by=c("NACE_BR", "year"), all.x = T)
-analysis_panel <- analysis_panel[year<2018 & n_firms_in_industry>10 & substr(NACE_BR, 1, 2) %in% 10:33]
+analysis_panel <- analysis_panel[year<2018 & n_firms_in_industry>10]
+# analysis_panel <- analysis_panel[year<2018 & n_firms_in_industry>10 & substr(NACE_BR, 1, 2) %in% 10:13]
 
-formula <- " + diff_leader_vs_2nd + asinh(n_firms) + asinh(n_patent_family) +  asinh(total_nq) | year"
 
-formula_vars <- read_csv("var
-    citation_external_share
-    citation_self_share
-    mean_n_patent_family
-    mean_leader_cite_score_1
-    mean_top4_cite_score_1
-    mean_top10_cite_score_1
-    mean_leader_cite_score_0
-    mean_top4_cite_score_0
-    mean_top10_cite_score_0") %>% setDT()
+formula <- " + asinh(n_firms) + asinh(n_patent_family) +  asinh(total_nq) | year"
+graphs <- F
+
+formula_vars <- read_csv("var, description
+    citation_external_share, Share of External Cites
+    citation_self_share, Share of Self-Cites
+    mean_n_patent_family, Mean N. Patents
+    mean_leader_cite_score_1, Mean Self-Cites Leader
+    mean_top4_cite_score_1, Mean Self-Cites Top4
+    mean_top10_cite_score_1, Mean Self-Cites Top10
+    mean_leader_cite_score_0, Mean Cites Laggards to Leader
+    mean_top4_cite_score_0, Mean Cites Laggards to Top 4
+    mean_top10_cite_score_0, Mean Cites Laggards to Top 10") %>% setDT()
 
 y_vars <- fread("var, description
                 HHI_industry, HHI
                 CR4, CR4
+                markup, Markups
                 profit_share, Profit Share
                 labor_share, Labor Share
                 entry_rate, Entry Rate
                 young_employment_share, Young Employment
-                frontier_laggard_gap, TFP Gap
                 gross_job_reallocation, Gross Job Reallocation
                 employment_growth_dispersion, Growth Dispersion
                 ")
+# frontier_laggard_gap, TFP Gap
+
+analysis_panel[, NACE_2d_BR:=substr(NACE_BR, 1, 2)]
+analysis_panel <- analysis_panel_og
+
+# analysis_panel_og <- analysis_panel
+analysis_panel <- analysis_panel[NACE_2d_BR %in% prodcom_sectors & year > 2008]
 
 for(i in 1:nrow(formula_vars)){
   
@@ -577,42 +588,46 @@ for(i in 1:nrow(formula_vars)){
   
   regressions<-list()
   
+  # Run regressions and create graphs
   for(j in 1:nrow(y_vars)){
     regressions[[y_vars[j, description]]] <- feols(
       as.formula(paste0(y_vars[j, var], " ~ ", xs)),
+      cluster = ~ NACE_BR,
+      weights = asinh(analysis_panel$n_patent_family),
       data = analysis_panel
     )
     
-    if(!dir.exists(paste0(analysis_output_dir, "/", y_vars[j, var]))){
-      dir.create(paste0(analysis_output_dir, "/", y_vars[j, var]))
+    if(graphs){
+      
+      if(!dir.exists(paste0(analysis_output_dir, "/", y_vars[j, var]))){
+        dir.create(paste0(analysis_output_dir, "/", y_vars[j, var]))
+      }
+      
+      ggplot(analysis_panel, aes(x=.data[[ y_vars[j, var]]], y=.data[[formula_vars[i, var]]])) +
+        geom_point(alpha=0.1, aes(size=total_empl)) + 
+        geom_smooth(method="lm")
+      ggsave(paste0(analysis_output_dir, "/", y_vars[j, var], "/", y_vars[j, var], "_", formula_vars[i, var], ".png"))
+      
     }
-    
-    ggplot(analysis_panel, aes(x=.data[[ y_vars[j, var]]], y=.data[[formula_vars[i, var]]])) +
-      geom_point(alpha=0.1, aes(size=total_empl)) + 
-      geom_smooth(method="lm")
-    ggsave(paste0(analysis_output_dir, "/", y_vars[j, var], "/", y_vars[j, var], "_", formula_vars[i, var], ".png"))
     
   }
   
+  coef_map = c(
+    setNames(formula_vars$description, formula_vars$var),
+    "diff_leader_vs_2nd" = "2nd Rev./Leader Rev.",
+    "asinh(n_firms)" = "Log N. Firms",
+    "asinh(n_patent_family)" = "Log N. Pats in Family",
+    "asinh(total_nq)" = "Log Total Rev."
+  )
+  
   modelsummary(
     regressions,
-    output = file.path(analysis_output_dir, paste0("knowledge_diffusion_", formula_vars[i, var], "_regressions.html")),
+    output = file.path(analysis_output_dir, paste0("knowledge_diffusion_", formula_vars[i, var], "_regressions.tex")),
     gof_omit = "IC|Log|Theta",
-    stars = TRUE
+    stars = TRUE, 
+    coef_map = coef_map
   )
   
 }
 
 
-saveRDS(
-  list(
-    analysis_panel = analysis_panel,
-    regressions = regressions,
-    knowledge_diffusion_patent = knowledge_diffusion_patent,
-    knowledge_diffusion_ipcr = knowledge_diffusion_ipcr,
-    industry_outcomes = industry_outcomes
-  ),
-  file = file.path(analysis_output_dir, "knowledge_diffusion_workspace.RDS")
-)
-
-message("Knowledge diffusion analysis completed. Results stored in ", analysis_output_dir)
