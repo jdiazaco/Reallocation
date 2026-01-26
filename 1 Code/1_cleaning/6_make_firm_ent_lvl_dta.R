@@ -5,7 +5,15 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 
 end <- 2022
 # lifi_data <- read_parquet("C:/Users/Public/1. Microprod/0. Raw data processing/Codes/Preparation_LIFI/LIFI.parquet")
-lifi_data <- as.data.table(read_rds("C:/Users/Public/1. Microprod/0. Raw data processing/Codes/Preparation_LIFI/LIFI.rds")) 
+
+if( grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  lifi_data <- as.data.table(read_rds("G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/2 Data/LIFI.rds")) 
+  # lifi_data <- as.data.table(read_parquet("G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/2 Data/LIFI/LIFI.parquet")) 
+} else {
+  lifi_data <- as.data.table(read_rds("C:/Users/Public/1. Microprod/0. Raw data processing/Codes/Preparation_LIFI/LIFI.rds")) 
+  # lifi_data <- as.data.table(read_parquet("~/Reallocation/7 New infrastructure/2 Data/LIFI/LIFI.parquet")) 
+}
+
 # lifi_data <- as.data.table(read_parquet("C:/Users/Public/1. Microprod/0. Raw data processing/Codes/Preparation_LIFI/LIFI.parquet")) 
 firm_nace_data <- read_parquet("firm_lists/firmid_NACE_BR_year.parquet")
 
@@ -77,7 +85,7 @@ table(firm_data$group_french_or_foreign)
 
 
 
-firm_data <- firm_data[, .(firmid, year, firmid_hg, firm_nationality,
+firm_data <- firm_data[, .(firmid, year, NACE_BR, firmid_hg, firm_nationality, 
                            entid, ent_nationality,  ent_type, list_firmid,
                            change_ent, change_ent_type, change_firmid_hg, jaccard_group, change_in_bg, group_nationality,      
                            group_french_or_foreign)]

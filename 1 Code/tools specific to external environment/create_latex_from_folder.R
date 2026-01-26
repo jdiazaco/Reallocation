@@ -99,7 +99,7 @@ create_latex_from_folder <- function(folder_path, relative_root, output_tex = "M
   message("LaTeX file created at: ", file.path(folder_path, output_tex))
 }
 
-folder_path<-"C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/3 Output/2025/Export 16.09/"
+folder_path<-"G:/My Drive/IWH/PhD/Reallocation/Exports/2025/NEWPROD_DC9FEE06BAB48D5BED0BD22CED2A6F88_20251126/"
 relative_root<-""
 output_tex = "Main.tex"
 

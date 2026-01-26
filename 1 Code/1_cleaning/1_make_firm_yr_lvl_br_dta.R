@@ -24,18 +24,35 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
     read_parquet
   ) |> to_dt()
   
-  v1 <- unique(as.character(firm_yr_lvl_br_dta$firmid)) %>% sort() %>% na.omit()
-  v2 <- unique(as.character(patent_data$firmid)) %>% sort() %>% na.omit()
-  n <- max(length(v1), length(v2))
-  v1 <- c(v1, rep(NA, n - length(v1)))
-  v2 <- c(v2, rep(NA, n - length(v2)))
-  test <- data.table(
-    firmid_product_data = as.numeric(v1),
-    firmid_patent_data = v2
+  # Documentation: Create a side-by-side comparison table of unique firm IDs from two sources
+  # - Extract unique firm IDs from firm_yr_lvl_br_dta and patent_data, convert to character, sort, and remove NA
+  # - Determine n as the maximum length of the two unique-ID vectors
+  # - Pad the shorter vector(s) with NA so both vectors have length n
+  # - Construct a data.table 'test' with:
+  #     * firmid_product_data: numeric coercion of v1 (as.numeric(v1))
+  #     * firmid_patent_data: v2 (character)
+  # - Purpose: align and compare firm identifiers from product-level and patent datasets side-by-side
+  # - Note: converting v1 to numeric will yield NA for any non-numeric IDs
+  br_firmids_char <- unique(as.character(firm_yr_lvl_br_dta$firmid)) %>% sort() %>% na.omit()
+  patent_firmids_char <- unique(as.character(patent_data$firmid)) %>% sort() %>% na.omit()
+  pad_len <- max(length(br_firmids_char), length(patent_firmids_char))
+  br_firmids_padded <- c(br_firmids_char, rep(NA_character_, pad_len - length(br_firmids_char)))
+  patent_firmids_padded <- c(patent_firmids_char, rep(NA_character_, pad_len - length(patent_firmids_char)))
+  firmid_comparison_table <- data.table(
+    firmid_br_numeric = as.numeric(br_firmids_padded),
+    firmid_patent_string = patent_firmids_padded
   )
   
-  firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, test, by.x="firmid", by.y="firmid_product_data", all.x=TRUE) %>%
-    .[, firmid:=as.character(firmid_patent_data)] %>% .[ , firmid_patent_data:=NULL]
+  # Map BR firmids to patent firmids where possible; replace BR firmid with patent id when available
+  firm_yr_lvl_br_dta <- merge(
+    firm_yr_lvl_br_dta,
+    firmid_comparison_table,
+    by.x = "firmid",
+    by.y = "firmid_br_numeric",
+    all.x = TRUE
+  ) %>%
+    .[, firmid := as.character(firmid_patent_string)] %>%
+    .[, firmid_patent_string := NULL]
   
 } else {
   ## import BR data
@@ -130,13 +147,14 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   firm_yr_lvl_br_dta[, firm_birth_year := NULL]
   hist(firm_yr_lvl_br_dta$legal_birth_year, breaks = 121)
   
-}
-
-{
-  firm_yr_lvl_br_dta <- read_csv("ficusfare_profil_wof_19942019_v0222.csv")
-  test <- fread("1_temp.csv")
+  {
+    firm_yr_lvl_br_dta <- read_csv("ficusfare_profil_wof_19942019_v0222.csv")
+    test <- fread("1_temp.csv")
+    
+  }
   
 }
+
 
 fwrite(firm_yr_lvl_br_dta, "1_temp.csv")
 firm_yr_lvl_br_dta <- fread("1_temp.csv")
@@ -166,19 +184,18 @@ firm_yr_lvl_br_dta[, `:=`(sum_costs = (labor_cost + (capital * share_capital_cos
     nq_raw_materials = ifelse(raw_materials != 0, nq / raw_materials, 0)
   )]
 
-  # Calculate median cost shares by industry-year
-  cost_share_medians <- firm_yr_lvl_br_dta[, .(
-    elas_t_l = median(t_l, na.rm = TRUE),
-    elas_t_k = median(t_k, na.rm = TRUE),
-    elas_t_m = median(t_m, na.rm = TRUE)
-  ), by = .(NACE_BR, year)]
+# Calculate median cost shares by industry-year
+cost_share_medians <- firm_yr_lvl_br_dta[, .(
+  elas_t_l = median(t_l, na.rm = TRUE),
+  elas_t_k = median(t_k, na.rm = TRUE),
+  elas_t_m = median(t_m, na.rm = TRUE)
+), by = .(NACE_BR, year)]
 
-  # Merge medians back to main data
-  firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, cost_share_medians, by = c("NACE_BR", "year"), all.x = TRUE)
+# Merge medians back to main data
+firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, cost_share_medians, by = c("NACE_BR", "year"), all.x = TRUE)
 
-  # Estimate cost-share production function by industry-year and compute TFP residuals
-  firm_yr_lvl_br_dta[, tfpr := nq - (elas_t_l * asinh(empl) + elas_t_k * asinh(capital) + elas_t_m * asinh(raw_materials))]
-
+# Estimate cost-share production function by industry-year and compute TFP residuals
+firm_yr_lvl_br_dta[, tfpr := nq - (elas_t_l * asinh(empl) + elas_t_k * asinh(capital) + elas_t_m * asinh(raw_materials))]
 
 ## generate lagged variables Juli?n: add capital
 normal_cols = c("nq", "empl", "capital", "raw_materials", "labor_cost", "tfpr") #, "tfp"
@@ -336,41 +353,47 @@ NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d_BR"
 print("The following should be only 1: ")
 table(firm_yr_lvl_br_dta[, .(n=.N), by=.(firmid, year)]$n)
 
-# Bring in Alex's linkedin data
-linkedin = read_parquet("linkedin_data/french_affiliated_firm_roles_collapsed_clean.parquet") %>%
-  select(-c(rcid, `__index_level_0__`))  %>% setDT(.)%>% setkey(firmid, year)
-firm_yr_lvl_br_dta <- linkedin[firm_yr_lvl_br_dta]
-rm(linkedin); gc()
-firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
-firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
-setkey(firm_yr_lvl_br_dta, firmid, year)
-
-# Bring in NUTS information
-nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv") 
-nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
-
-# # Clean it and merge it to product_summary
-nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
-# nuts<-nuts[firmid %in% unique(product_summary$firmid)]
-nuts<-nuts[, c("firmid", "year", "nuts3")]
-nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
-nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
-nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
-nuts<-nuts[, c("firmid", "year", "nuts3")] %>% setkey(firmid, year) # firmid==445045537 
-# firm_yr_lvl_br_dta<- merge(firm_yr_lvl_br_dta, nuts, by=c("firmid", "year"), all.x = T)
-firm_yr_lvl_br_dta <- nuts[firm_yr_lvl_br_dta]
+if (!grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  
+  
+  # Bring in Alex's linkedin data
+  linkedin = read_parquet("linkedin_data/french_affiliated_firm_roles_collapsed_clean.parquet") %>%
+    select(-c(rcid, `__index_level_0__`))  %>% setDT(.)%>% setkey(firmid, year)
+  firm_yr_lvl_br_dta <- linkedin[firm_yr_lvl_br_dta]
+  rm(linkedin); gc()
+  firm_yr_lvl_br_dta <- firm_yr_lvl_br_dta[, log_emp_rnd:=log(emp_rnd)]
+  firm_yr_lvl_br_dta[, log_emp_rnd := ifelse(is.nan(log_emp_rnd) | is.infinite(log_emp_rnd), NA_real_, log_emp_rnd)]
+  setkey(firm_yr_lvl_br_dta, firmid, year)
+  
+  # Bring in NUTS information
+  nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv") 
+  nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+  
+  # # Clean it and merge it to product_summary
+  nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]
+  # nuts<-nuts[firmid %in% unique(product_summary$firmid)]
+  nuts<-nuts[, c("firmid", "year", "nuts3")]
+  nuts<-merge(nuts, nuts_conc, by.x="nuts3", by.y="nuts2013", all.x=T)
+  nuts[, nuts3:=fifelse(!is.na(nuts2016), nuts2016, nuts3)]
+  nuts[, nuts3:=fifelse(nuts3=="",NA_character_, nuts3)]
+  nuts<-nuts[, c("firmid", "year", "nuts3")] %>% setkey(firmid, year) # firmid==445045537 
+  # firm_yr_lvl_br_dta<- merge(firm_yr_lvl_br_dta, nuts, by=c("firmid", "year"), all.x = T)
+  firm_yr_lvl_br_dta <- nuts[firm_yr_lvl_br_dta]
+}
 
 # Bring in markup information
 if(grepl("Drive", getwd())){
   # create variable mu_sepcal_TL_sNoFSR_t10 sampling from 0.5 to 2
   firm_yr_lvl_br_dta[, mu_sepcal_TL_sNoFSR_t10 := runif(.N, min = 0.5, max = 2)]
+  firm_yr_lvl_br_dta[, mu_sepcal_TL_sBFSR_t10 := runif(.N, min = 0.5, max = 2)]
+  firm_yr_lvl_br_dta[, firmid:=str_pad(firmid, 9, side="left", "0")]
+  
 } else {
   markup_data <- read_dta("dta_mu_sepcal_ficusfare_reduced_sec_year_firm_win020_p_XTABOND_andSTATA_DGM.dta") 
   setDT(markup_data)
   markup_data[, firmid:=str_pad(siren, 9, side="left", "0")]
   markup_data[, siren:=NULL]
   firm_yr_lvl_br_dta <- merge(firm_yr_lvl_br_dta, markup_data, by=c("firmid", "year"), all.x=T)
-  
 }
 
 # Save firm_data with only relevant variables and firms in industries covered by prodcom

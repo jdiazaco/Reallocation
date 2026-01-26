@@ -2,6 +2,7 @@
 source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/Main.R"))
 
 # load data ----------------------------------------------------------------
+start <- 1994
 end <- 2022
 
 # Figure out what sectors to use
@@ -74,7 +75,7 @@ firm_data <- merge(firm_data,
                    by=c("firmid", "year", "consolidated_birth_year", "legal_birth_year", "economic_birth_year", "economic_death_year"),
                    all.x=T)
 firm_data <- merge(firm_data,
-                   patent_data,
+                   patent_data[, firmid:=str_pad(firmid, "0", "left", 9)],
                    by=c("firmid", "year"),
                    all.x=T)
 firm_data <- merge(firm_data,

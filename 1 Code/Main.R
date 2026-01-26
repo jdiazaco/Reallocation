@@ -76,7 +76,7 @@ source(paste0(tools_dir, "core_switch_product.R"))
 # source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
 source(paste0(tools_dir, "create_lags.R"))
 source(paste0(tools_dir, "winsorize.R"))
-source(paste0(tools_dir, "dummy_dataset.R"))
+# source(paste0(tools_dir, "dummy_dataset.R"))
 
 
 safe_mean <- function(x) ifelse(all(is.na(x)), NA_real_, mean(x, na.rm = TRUE))
@@ -189,13 +189,18 @@ exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
   threshold_jaccard_change_business_group <- 1/3
   
   # firm_industry_data <- read_parquet("firm_lists/firmid_NACE_BR_year.parquet")
+
+  if (grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  prodcom_sectors <- c("07", "08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
+                       "26", "27", "28", "29", "30", "31", "32", "33", "42", "43", "45", "47", "58", "68", "70", 
+                       "71", "72", "73", "77", "82", "95", "96")
+  } else {
   prodcom_sectors <- read_csv("firm_lists/prodcom_sectors.csv")
   setDT(prodcom_sectors)
   prodcom_sectors <- unique(prodcom_sectors[share >= minimum_share_in_prodcom & in_br >= minimum_n_in_br] %>% pull(NACE_2d_BR))
+  }
   
-  # prodcom_sectors <- c("07", "08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
-  #                      "26", "27", "28", "29", "30", "31", "32", "33", "42", "43", "45", "47", "58", "68", "70", 
-  #                      "71", "72", "73", "77", "82", "95", "96")
+  
   
 output_dir <- paste0(output_dir, "2026/Export 21.01/")
 output_dir_creator(output_dir)

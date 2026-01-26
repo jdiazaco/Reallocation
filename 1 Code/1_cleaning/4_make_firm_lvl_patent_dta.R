@@ -221,6 +221,10 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
   firm_lvl_patent_data <- firm_lvl_patent_data %>% # Treat NA as 0 for ipcr_creat
     window_var_cretor("firmid", "year", "ipcr_creat", window_length, 0, "ipcr_creat_window", na_rm = TRUE) # Create 2-year window for ipcr_creat
   
+  if(grepl("Drive", getwd())) {
+    firm_lvl_patent_data[, firmid := str_pad(firmid, 9, side = "left", pad = "0")]
+  }
+
   # Save final data
   write_rds(firm_lvl_patent_data, "4b_patenting_products_firm_level.rds")
 }
@@ -267,6 +271,12 @@ saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
   window_length <- 2
   firm_lvl_tm_data <- window_var_cretor(firm_lvl_tm_data, "firmid", "year", "tm_dummy", window_length, 0, "tm_dummy_window", na_rm = TRUE)
   firm_lvl_tm_data[, ever_tm := as.numeric(any(tm_dummy)), by = firmid]
+
+  if(grepl("Drive", getwd())) {
+    firm_lvl_tm_data[, firmid := str_pad(firmid, 9, side = "left", pad = "0")]
+  }
+
+
   write_rds(firm_lvl_tm_data, "4c_tm_firm_level.rds")
   
 }
