@@ -43,6 +43,7 @@ selected_names <- c(
   "age_leader", "age_size_bucket", "age_size_quartile", "age_size_decile", 
   "age_size_percentile", "age_size_1000tile", "age_top_4_leaders", "age_top_10_leaders", 
   "leader", "top_4_leaders", "top_10_leaders",
+  "size_quartile", "size_decile", "size_percentile", "size_1000tile", 
   
   # Size measures and ranks
   "size", "size_quartile", "size_decile", "size_percentile", "size_1000tile",
@@ -66,9 +67,10 @@ selected_names <- c(
   "new_products", "first_introduction", 
   "net_product_creat", "net_product_creat_window",
   "net_product_destr", "net_product_destr_window",
+  names(patenting_products)[grep("new_", names(patenting_products))],
   
   # Patents & filing
-  "patent", "patent_window", "ever_patent",
+  "pat_families_dummy", "pat_families_dummy_window", "ever_patent",
   "pat_filings_dummy", "pat_filings_dummy_window", "num_pat_filings", "total_pat_filings", "total_pat_filings_growth",
   "pat_families_dummy", "pat_families_dummy_window", "num_pat_families", "total_pat_families", "total_pat_families_growth",
   "product_innovative_pat_filings_window", "product_innovative_pat_filings_window",
@@ -80,21 +82,16 @@ selected_names <- c(
   "NACE_cum", "NACE_cum_l",  "new_NACE",  "n_NACE", "n_NACE_bar", "n_NACE_growth",
   
   # Trademarks
-  "tm", "tm_window", "ever_tm"
+  "tm_dummy", "tm_dummy_window", "ever_tm"
 )
 
 in_firm_data <- selected_names[selected_names %in% names(patenting_products)]
 not_in_firm_data <- selected_names[!(selected_names %in% names(patenting_products))]
 
-# Filter to selected prodcom sectors
-prodcom_sectors <- read_csv("firm_lists/prodcom_sectors.csv")
-setDT(prodcom_sectors)
-prodcom_sectors <- prodcom_sectors[share>= minimum_share_in_prodcom & in_br >= minimum_n_in_br]
-
 # Keep only continuers and from 2009
 # patenting_products <- patenting_products[year>=start & year!=consolidated_birth_year & year<=economic_death_year]  %>%
 patenting_products <- patenting_products[year>start & abs(empl_growth) != 2 & abs(nq_growth) != 2 & abs(capital_growth) != 2]  %>%
-  select(in_firm_data) %>% filter(NACE_2d_BR %in% prodcom_sectors$NACE_2d_BR)
+  select(in_firm_data) %>% filter(NACE_2d_BR %in% prodcom_sectors)
 
 # Save final data
 write_rds(patenting_products, "temp/patenting_products_firm_level.RDS")
