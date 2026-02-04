@@ -5,128 +5,129 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 
 
 {
-# a) Load patent level data------------------------------------------------
-patent_data <- read_parquet("3_patent_lvl_patent_dta.parquet")
-setDT(patent_data)
-patent_data <- patent_data[!is.na(firmid)]
-
-# b) Expand multiple firm IDs per patent ---------------------------------------
-# patent_data[, siren_list := strsplit(siren, ",")]
-# patent_data <- patent_data[
-#   , .(firmid = unlist(siren_list)),
-#   by = setdiff(names(patent_data), "siren_list")
-# ]
-
-# c) Process IPCR codes ------------------------------------------------------
-patent_data[, `:=`(
-  ipcr_upd = gsub(" ", "", ipc_subclasses_symbol),
-  patent_id = .I
-)]
-
-patent_data[, ipcr_list := strsplit(ipcr_upd, ";")]
-test <- patent_data[, .(ipcr = unlist(ipcr_list)), by = .(firmid, filing_year, patent_id)]
-
-# Normalize IPCR to 4 digits + handle special codes
-special_codes <- c("A61K8", "B65F1", "B65F3", "B65F5", "B65F7", "B65F9")
-test[, ipcr4 := substr(toupper(ipcr), 1, 5)]
-test[, ipcr4 := ifelse(ipcr4 %in% special_codes, ipcr4, substr(ipcr4, 1, 4))]
-
-test <- unique(test[, .(firmid, filing_year, patent_id, ipcr4)])
-
-# d) Add NACE codes via concordance --------------------------------------------
-nace_ipc_concord <- unique(fread("Ancillary datasets/IPC V8_NACE Rev 2.txt"))
-test <- merge(test, nace_ipc_concord[, .(IPCV2015, NACE2)],
-  by.x = "ipcr4", by.y = "IPCV2015", all.x = TRUE
-)
-
-# e) Create full firm-year panel ------------------------------------------------
-start <- 1990
-end <- 2024
-years_per_firm <- test[, .(min_year = start, max_year = end), by = firmid]
-all_years <- years_per_firm[, .(filing_year = min_year:max_year), by = firmid]
-
-test_expanded <- merge(all_years, test, by = c("firmid", "filing_year"), all = TRUE)
-rm(test, years_per_firm, patent_data_upd, nace_ipc_concord)
-gc()
-setorder(test_expanded, firmid, filing_year)
-
-# f) Efficient cumulative IPCR4 and NACE2 sets ----------------------------------
-cum_data <- test_expanded[
-  order(firmid, filing_year),
-  .(ipcr4 = list(ipcr4), NACE2 = list(NACE2)),
-  by = .(firmid, filing_year)
-]
-#   cum_data <- cum_data[
-#   , `:=`(
-#     ipcr_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), ipcr4, accumulate = TRUE),
-#     NACE_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), NACE2, accumulate = TRUE)
-#   ),
-#   by = firmid
-# ]
-
-cum_data <- cum_data[
-  , c("ipcr_cum", "NACE_cum") :={
-    ipcr_cum_list <- vector("list", .N)
-    NACE_cum_list <- vector("list", .N)
-    ipcr_seen<- character()
-    NACE_seen <- character()
-    for(i in seq_len(.N)){
-      ipcr_new <- ipcr4[[i]]
-      NACE_new <- NACE2[[i]]
-      if(!all(is.na(ipcr_new))) ipcr_seen <- unique(c(ipcr_seen, ipcr_new[!is.na(ipcr_new)]))
-      if(!all(is.na(NACE_new))) NACE_seen <- unique(c(NACE_seen, NACE_new[!is.na(NACE_new)]))
-      ipcr_cum_list[[i]] <- ipcr_seen
-      NACE_cum_list[[i]] <- NACE_seen
-    }
-    list(ipcr_cum_list, NACE_cum_list)
-  },
-  by = firmid
-]
-
-
-  cum_data <- cum_data [
-  , .(firmid, filing_year, ipcr_cum, NACE_cum)
-] 
-  cum_data <- cum_data[
-  , `:=`(
-    ipcr_cum = lapply(ipcr_cum, unique),
-    NACE_cum = lapply(NACE_cum, unique),
-    year = filing_year
+  # a) Load patent level data------------------------------------------------
+  patent_data <- read_parquet("3_patent_lvl_patent_dta.parquet")
+  setDT(patent_data)
+  patent_data <- patent_data[!is.na(firmid)]
+  
+  # b) Expand multiple firm IDs per patent ---------------------------------------
+  # patent_data[, siren_list := strsplit(siren, ",")]
+  # patent_data <- patent_data[
+  #   , .(firmid = unlist(siren_list)),
+  #   by = setdiff(names(patent_data), "siren_list")
+  # ]
+  
+  # c) Process IPCR codes ------------------------------------------------------
+  patent_data[, `:=`(
+    ipcr_upd = gsub(" ", "", ipc_subclasses_symbol),
+    patent_id = .I
+  )]
+  
+  patent_data[, ipcr_list := strsplit(ipcr_upd, ";")]
+  test <- patent_data[, .(ipcr = unlist(ipcr_list)), by = .(firmid, filing_year, patent_id)]
+  
+  # Normalize IPCR to 4 digits + handle special codes
+  special_codes <- c("A61K8", "B65F1", "B65F3", "B65F5", "B65F7", "B65F9")
+  test[, ipcr4 := substr(toupper(ipcr), 1, 5)]
+  test[, ipcr4 := ifelse(ipcr4 %in% special_codes, ipcr4, substr(ipcr4, 1, 4))]
+  
+  test <- unique(test[, .(firmid, filing_year, patent_id, ipcr4)])
+  
+  # d) Add NACE codes via concordance --------------------------------------------
+  nace_ipc_concord <- unique(fread("Ancillary datasets/IPC V8_NACE Rev 2.txt"))
+  nace_ipc_concord[, NACE2 := substr(as.character(NACE2), 1,2)]
+  test <- merge(test, nace_ipc_concord[, .(IPCV2015, NACE2)],
+                by.x = "ipcr4", by.y = "IPCV2015", all.x = TRUE
   )
-] 
+  
+  # e) Create full firm-year panel ------------------------------------------------
+  start <- 1990
+  end <- 2024
+  years_per_firm <- test[, .(min_year = start, max_year = end), by = firmid]
+  all_years <- years_per_firm[, .(filing_year = min_year:max_year), by = firmid]
+  
+  test_expanded <- merge(all_years, test, by = c("firmid", "filing_year"), all = TRUE)
+  rm(test, years_per_firm, patent_data_upd, nace_ipc_concord)
+  gc()
+  setorder(test_expanded, firmid, filing_year)
+  
+  # f) Efficient cumulative IPCR4 and NACE2 sets ----------------------------------
+  cum_data <- test_expanded[
+    order(firmid, filing_year),
+    .(ipcr4 = list(ipcr4), NACE2 = list(NACE2)),
+    by = .(firmid, filing_year)
+  ]
+  #   cum_data <- cum_data[
+  #   , `:=`(
+  #     ipcr_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), ipcr4, accumulate = TRUE),
+  #     NACE_cum = Reduce(function(x, y) unique(c(x[!is.na(x)], if (all(is.na(y))) character(0) else y)), NACE2, accumulate = TRUE)
+  #   ),
+  #   by = firmid
+  # ]
+  
+  cum_data <- cum_data[
+    , c("ipcr_cum", "NACE_cum") :={
+      ipcr_cum_list <- vector("list", .N)
+      NACE_cum_list <- vector("list", .N)
+      ipcr_seen<- character()
+      NACE_seen <- character()
+      for(i in seq_len(.N)){
+        ipcr_new <- ipcr4[[i]]
+        NACE_new <- NACE2[[i]]
+        if(!all(is.na(ipcr_new))) ipcr_seen <- unique(c(ipcr_seen, ipcr_new[!is.na(ipcr_new)]))
+        if(!all(is.na(NACE_new))) NACE_seen <- unique(c(NACE_seen, NACE_new[!is.na(NACE_new)]))
+        ipcr_cum_list[[i]] <- ipcr_seen
+        NACE_cum_list[[i]] <- NACE_seen
+      }
+      list(ipcr_cum_list, NACE_cum_list)
+    },
+    by = firmid
+  ]
+  
+  
+  cum_data <- cum_data [
+    , .(firmid, filing_year, ipcr_cum, NACE_cum)
+  ] 
+  cum_data <- cum_data[
+    , `:=`(
+      ipcr_cum = lapply(ipcr_cum, unique),
+      NACE_cum = lapply(NACE_cum, unique),
+      year = filing_year
+    )
+  ] 
   cum_data <- cum_data[, `:=`(
-  n_ipcr = sapply(ipcr_cum, function(x) sum(!is.na(x))),
-  n_NACE = sapply(NACE_cum, function(x) sum(!is.na(x)))
-)]
-
-# cum_data[, firmid_char:=str_pad(firmid, 9, side="left", pad="0")]
-# cum_data[, firmid:=NULL]
-# cum_data <- merge(cum_data, firmid_keys, by="firmid_char", all.x=T)
-
-# cum_data <- cum_data[, firmid := as.integer(.GRP), by = firmid] %>% .[, firmid := as.numeric(firmid)] 
-growth <- growth_creator(data=cum_data, 
-                         normal_cols = c("n_NACE", "n_ipcr"), 
-                         by_vars = c("firmid", "year"),
-                         n_lag=1)[, c("firmid", "year", "n_NACE_bar", "n_ipcr_bar", "n_NACE_growth", "n_ipcr_growth")]
-# cum_data_og <- copy(cum_data)
-cum_data <- merge(cum_data, growth, by = c("firmid", "year"), all.x = T)
-
-# Shift forward for lag comparison
-cum_data_fwd <- copy(cum_data)[, filing_year := filing_year + 1][, c("firmid", "filing_year", "ipcr_cum", "NACE_cum")]
-setnames(cum_data_fwd, c("ipcr_cum", "NACE_cum"), c("ipcr_cum_l", "NACE_cum_l"))
-
-# Merge current and lagged cumulative data
-ipcr_cumulative <- merge(cum_data, cum_data_fwd, by = c("firmid", "filing_year"), all.x = TRUE)
-
-# g) Identify new IPCR/NACE codes per year -------------------------------------
-ipcr_cumulative[, `:=`(
-  new_ipcr = Map(setdiff, ipcr_cum, ipcr_cum_l),
-  new_NACE = Map(setdiff, NACE_cum, NACE_cum_l)
-)]
-ipcr_cumulative[, ipcr_creat := sapply(new_ipcr, function(x) ifelse(length(x) > 0, 1, 0))]
-ipcr_cumulative[, ipcr_creat := ifelse(ipcr_creat == 1 & is.na(n_NACE_growth), 0, ipcr_creat)]
-
-saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
+    n_ipcr = sapply(ipcr_cum, function(x) sum(!is.na(x))),
+    n_NACE = sapply(NACE_cum, function(x) sum(!is.na(x)))
+  )]
+  
+  # cum_data[, firmid_char:=str_pad(firmid, 9, side="left", pad="0")]
+  # cum_data[, firmid:=NULL]
+  # cum_data <- merge(cum_data, firmid_keys, by="firmid_char", all.x=T)
+  
+  # cum_data <- cum_data[, firmid := as.integer(.GRP), by = firmid] %>% .[, firmid := as.numeric(firmid)] 
+  growth <- growth_creator(data=cum_data, 
+                           normal_cols = c("n_NACE", "n_ipcr"), 
+                           by_vars = c("firmid", "year"),
+                           n_lag=1)[, c("firmid", "year", "n_NACE_bar", "n_ipcr_bar", "n_NACE_growth", "n_ipcr_growth")]
+  # cum_data_og <- copy(cum_data)
+  cum_data <- merge(cum_data, growth, by = c("firmid", "year"), all.x = T)
+  
+  # Shift forward for lag comparison
+  cum_data_fwd <- copy(cum_data)[, filing_year := filing_year + 1][, c("firmid", "filing_year", "ipcr_cum", "NACE_cum")]
+  setnames(cum_data_fwd, c("ipcr_cum", "NACE_cum"), c("ipcr_cum_l", "NACE_cum_l"))
+  
+  # Merge current and lagged cumulative data
+  ipcr_cumulative <- merge(cum_data, cum_data_fwd, by = c("firmid", "filing_year"), all.x = TRUE)
+  
+  # g) Identify new IPCR/NACE codes per year -------------------------------------
+  ipcr_cumulative[, `:=`(
+    new_ipcr = Map(setdiff, ipcr_cum, ipcr_cum_l),
+    new_NACE = Map(setdiff, NACE_cum, NACE_cum_l)
+  )]
+  ipcr_cumulative[, ipcr_creat := sapply(new_ipcr, function(x) ifelse(length(x) > 0, 1, 0))]
+  ipcr_cumulative[, ipcr_creat := ifelse(ipcr_creat == 1 & is.na(n_NACE_growth), 0, ipcr_creat)]
+  
+  saveRDS(ipcr_cumulative, "4a_ipcr_cumulative.RDS")
 }
 
 # 2) Firm level patent and trademark database creation-------------------

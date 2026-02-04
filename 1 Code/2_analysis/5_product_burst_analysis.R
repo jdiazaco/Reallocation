@@ -261,31 +261,66 @@ burst_patenting_plots("size_series", series_patenting_burst_size)
 
 
 
-patenting_products[, `:=`(
-  rank = frank(-number_of_products, ties.method = "average", na.last = "keep"),
-  n_firms_patenting_products  = .N
-), by=year] %>%
-  .[, rank_share:=rank/n_firms_patenting_products]
+
+var_labels <- list(
+  prod_added = "Products Added",
+  num_pat_families = "Patent Families Added",
+  number_of_products = "Total Products"
+)
 
 
-for(var in c("prod_added", "num_pat_families")){
-  test <- patenting_products[year==2019,
-                             .(rank_share = mean(rank_share, na.rm=TRUE)),
-                             keyby = var
+
+for(var in c("prod_added", "num_pat_families", "number_of_products")){
+  
+  patenting_products[, `:=`(
+  rank = frank(-get(var), ties.method = "average", na.last = "keep"),
+  n_firms_patenting_products = .N
+  ), by = year] %>%
+  .[, rank_share := rank / n_firms_patenting_products]
+  
+  test <- patenting_products[
+  year == 2019 & !is.na(get(var)) & get(var) > 0 & !is.na(rank_share) & rank_share > 0,
+  .(rank_share = mean(rank_share, na.rm = TRUE)),
+  keyby = var
   ]
   
-  ggplot(test, aes_string(x=paste0("log(", var, ", base=2)"), y="log(rank_share, base=10)")) + 
-    geom_point()
+  ggplot(test, aes(x = .data[[var]], y = rank_share)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_continuous(
+    trans = "log2",
+    breaks = scales::breaks_log(base = 2)
+  ) +
+  scale_y_continuous(
+    trans = "log10",
+    breaks = scales::breaks_log(base = 10)
+  ) +
+  labs(
+    x = paste0(var_labels[[var]]),
+    y = "Rank Share"
+  ) +
+  theme_classic()
   
+  ggsave(paste0(output_dir, var, "_rank_share.png"))
+
 }
 
-test <- patenting_products[, .(rank_share=mean(rank_share, na.rm=T)), by=prod_added]
-
-ggplot(test, aes(x=log(prod_added, base=2) , y=log(rank_share, base=10))) + 
-  geom_point()
 
   
 # 8) Citation analysis ------------------------------------
+
+patent_records <- read_parquet("3_patent_lvl_patent_dta.parquet")
+patent_citation <- readRDS("3b_patent_citation_summary.rds") %>% setDT()
+product_data <- read_parquet(paste0("2_product_data/", cpa_or_pf, "2a_product_yr_lvl_dta.parquet"))
+ipcr_data <- readRDS("4a_ipcr_cumulative.RDS")
+
+subset_firms <- patenting_products[burst == 1 & ever_patent == 1] %>%
+  select(firmid, year, new_0, new_1, new_2, new_4, new_6, new_8, burst, NACE_cum, new_NACE, num_pat_families, number_of_products, prod_added) %>%
+  merge(product_data, by = c("firmid", "year"), all.x = T)
+length(unique(subset_firms$prodcom))
+
+
+
 
 
 patent_records <- merge(patent_records,
