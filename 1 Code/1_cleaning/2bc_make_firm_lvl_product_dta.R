@@ -80,12 +80,8 @@ product_core <- read_parquet(paste0("2_product_data/2b_product_core_dta.parquet"
 
 # Merge core variables back into product-level data
 product_data<-merge(product_data, product_core, by=c("firmid", "year"), all.x=TRUE)
-
-
 # Compute Entry and Exit Flags by Aggregation Level
 digits_inv <- sort(digits, decreasing = TRUE)
-
-
 for (i in seq_along(digits_inv)) {
   
   # i<-1
@@ -138,8 +134,6 @@ for (i in seq_along(digits_inv)) {
 product_data <- product_data %>%
   select(firmid, year, cpa_or_pf, rev, first_introduction, starts_with("new_"),
          discontinued, starts_with("exit_"), starts_with("core_"), starts_with("lag_"), everything())
-
-
 # Define working variables
 vars <- c(
   "first_introduction", names(product_data)[grep("^new", names(product_data))],
@@ -311,5 +305,207 @@ product_firm_data <- product_data[, .(leaders=list(unique(unlist(leader))),
                                       firms_in_pc=list(unique(unlist(firms_in_pc)))), by=.(firmid, year)]
 
 write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_product_competitors_dta.RDS"))
+# 5) Create firm-year patent-product NACE2 overlap dataset (2e) ------------------
+# Goal: combine NACE2d patenting information with product sectors at the firm-year level
+
+{
+  # --- 5.1 Load patent-level data (module 3 output) --------------------------
+  patent_lvl_data <- read_parquet("3_patent_lvl_patent_dta.parquet") %>% setDT(.)
+  patent_lvl_data <- patent_lvl_data[!is.na(firmid)]
+  patent_lvl_data[, firmid := as.character(firmid)]
+  patent_lvl_data[, year := filing_year]
+
+  # --- 5.2 Map patents to NACE2d using IPC concordance (same as module 4) -----
+  patent_lvl_data[, ipcr_upd := gsub(" ", "", ipc_subclasses_symbol)]
+  patent_lvl_data[, ipcr_list := strsplit(ipcr_upd, ";")]
+  patent_ipcr <- patent_lvl_data[, .(ipcr = unlist(ipcr_list)), by = .(firmid, filing_year, patent_family)]
+
+  special_codes <- c("A61K8", "B65F1", "B65F3", "B65F5", "B65F7", "B65F9")
+  patent_ipcr[, ipcr4 := substr(toupper(ipcr), 1, 5)]
+  patent_ipcr[, ipcr4 := ifelse(ipcr4 %in% special_codes, ipcr4, substr(ipcr4, 1, 4))]
+  patent_ipcr <- unique(patent_ipcr[, .(firmid, filing_year, patent_family, ipcr4)])
+
+  nace_ipc_concord <- unique(fread("Ancillary datasets/IPC V8_NACE Rev 2.txt"))
+  nace_ipc_concord[, NACE2 := substr(as.character(NACE2), 1, 2)]
+  patent_nace <- merge(
+    patent_ipcr, nace_ipc_concord[, .(IPCV2015, NACE2)],
+    by.x = "ipcr4", by.y = "IPCV2015", all.x = TRUE
+  )
+  # patent_nace <- patent_nace[!is.na(NACE2)]
+  patent_nace[, year := filing_year]
+
+  # --- 5.3 Load firm-level patent totals (module 4 output) -------------------
+  firm_lvl_patent_data <- read_rds("4b_patenting_products_firm_level.rds") %>% setDT(.)
+  firm_lvl_patent_data[, firmid := as.character(firmid)]
+  firm_lvl_patent_data <- firm_lvl_patent_data[, .(
+    firmid, year,
+    total_patents = total_pat_families,
+    new_patents = num_pat_families
+  )]
+
+  # --- 5.4 Load product-level data and define NACE2d product sets -------------
+  product_data_2a <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2a_product_yr_lvl_dta.parquet")) %>% setDT(.)
+  product_data_2a[, firmid := as.character(firmid)]
+
+  # Current products: active product lines in the year (first_introduction/reintroduced/incumbent)
+  product_current <- product_data_2a[
+    (first_introduction | reintroduced | incumbent) & !is.na(NACE_2d_pf),
+    .(NACE2 = unique(NACE_2d_pf)),
+    by = .(firmid, prod_year = year)
+  ]
+
+  # New products: first introduction in the year
+  product_new <- product_data_2a[
+    first_introduction & !is.na(NACE_2d_pf),
+    .(NACE2 = unique(NACE_2d_pf)),
+    by = .(firmid, prod_year = year)
+  ]
+
+  # --- 5.5 Bring in firm-level product data to merge in the end -------------
+  firm_lvl_product_data <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2c_firm_lvl_product_dta.parquet")) %>% setDT(.)
+  firm_lvl_product_data[, firmid := as.character(firmid)]
+
+
+  # --- 5.6 Count patents matching product sectors ----------------------------
+  # Use merge() and then filter by year conditions to avoid non-equi data.table joins
+
+  # Current products: stock (filing_year <= prod_year)
+  patent_current_merge <- merge(
+    patent_nace, product_current,
+    by = c("firmid", "NACE2"), allow.cartesian = TRUE
+  )
+  patent_current_stock <- patent_current_merge[
+    year <= prod_year,
+    .(patents_stock_in_current_products = uniqueN(patent_family)),
+    by = .(firmid, year = prod_year)
+  ]
+
+  # Current products: new patents in same year
+  patent_current_new <- patent_current_merge[
+    year == prod_year,
+    .(new_patents_in_current_products = uniqueN(patent_family)),
+    by = .(firmid, year = prod_year)
+  ]
+
+  # New products: horizons t, t+1, ..., t+5
+  base_years <- firm_lvl_patent_data[, .(firmid, year)]
+  horizons <- 0:5
+  newprod_stock_list <- list()
+  newprod_new_list <- list()
+
+  for (h in horizons) {
+    # Product sector set for new products in [t, t+h]
+    product_new_window <- merge(base_years, product_new, by = "firmid", allow.cartesian = TRUE)
+    product_new_window <- product_new_window[
+      prod_year >= year & prod_year <= year + h,
+      .(NACE2 = unique(NACE2)),
+      by = .(firmid, year)
+    ]
+
+    # Merge patent sectors with windowed new-product sectors
+    patent_newprod_merge <- merge(
+      patent_nace %>% rename(pat_year=year), product_new_window,
+      by = c("firmid", "NACE2"), allow.cartesian = TRUE
+    )
+
+    # Stock of patents (pat_year <= year) that match new product sectors in window
+    newprod_stock_list[[paste0("h", h)]] <- patent_newprod_merge[
+      pat_year <= year,
+      .(patents_stock = uniqueN(patent_family)),
+      by = .(firmid, year)
+    ][, horizon := h]
+
+    # New patents in year that match new product sectors in window
+    newprod_new_list[[paste0("h", h)]] <- patent_newprod_merge[
+      pat_year == year,
+      .(new_patents = uniqueN(patent_family)),
+      by = .(firmid, year)
+    ][, horizon := h]
+  }
+
+  newprod_stock_all <- rbindlist(newprod_stock_list, use.names = TRUE, fill = TRUE)
+  newprod_new_all <- rbindlist(newprod_new_list, use.names = TRUE, fill = TRUE)
+
+  newprod_stock_wide <- dcast(
+    newprod_stock_all,
+    firmid + year ~ horizon,
+    value.var = "patents_stock",
+    fill = 0
+  )
+  newprod_new_wide <- dcast(
+    newprod_new_all,
+    firmid + year ~ horizon,
+    value.var = "new_patents",
+    fill = 0
+  )
+
+  for (h in horizons) {
+    setnames(newprod_stock_wide, as.character(h), paste0("patents_stock_in_new_products_h", h))
+    setnames(newprod_new_wide, as.character(h), paste0("new_patents_in_new_products_h", h))
+  }
+
+  # --- 5.6 Merge counts and compute shares -----------------------------------
+  patent_product_nace2d <- merge(firm_lvl_patent_data, patent_current_stock, by = c("firmid", "year"), all.x = TRUE)
+  # patent_product_nace2d <- merge(firm_lvl_patent_data, 
+  #                                firm_lvl_product_data %>%
+  #                                  select(firmid, year, number_of_products, 
+  #                                         names(firm_lvl_product_data)[grepl("new_|exit_[0-9]", names(firm_lvl_product_data))]),
+  #                                by = c("firmid", "year"),
+  #                                all.x = TRUE)
+  patent_product_nace2d <- merge(patent_product_nace2d, patent_current_new, by = c("firmid", "year"), all.x = TRUE)
+  patent_product_nace2d <- merge(patent_product_nace2d, newprod_stock_wide, by = c("firmid", "year"), all.x = TRUE)
+  patent_product_nace2d <- merge(patent_product_nace2d, newprod_new_wide, by = c("firmid", "year"), all.x = TRUE)
+
+  # Replace NAs with 0 for counts
+  patent_product_nace2d <- merge(patent_product_nace2d, firm_lvl_product_data %>% select(firmid, year, prod_added, number_of_products), 
+                                 by=c("firmid", "year"),
+                                 all.x = T)
+  
+  count_vars_current_prods <- c(
+    "patents_stock_in_current_products", "new_patents_in_current_products")
+  
+  for (v in count_vars_current_prods){
+    patent_product_nace2d[!is.na(number_of_products) & number_of_products > 0, (v) := fifelse(is.na(get(v)), 0, get(v))]
+  }
+  
+  count_vars_new_prods <- c(
+    paste0("patents_stock_in_new_products_h", horizons),
+    paste0("new_patents_in_new_products_h", horizons)
+  )
+  for (v in count_vars_new_prods){
+    patent_product_nace2d[!is.na(prod_added) & prod_added > 0, (v) := fifelse(is.na(get(v)), 0, get(v))]
+  }
+
+  # Shares: handle zero denominators
+  patent_product_nace2d[, `:=`(
+    share_stock_patent_in_current_products = fifelse(total_patents > 0, patents_stock_in_current_products / total_patents, NA_real_),
+    share_new_patent_in_current_products = fifelse(new_patents > 0, new_patents_in_current_products / new_patents, NA_real_)
+  )]
+
+  # Shares for new products by horizon
+  for (h in horizons) {
+    stock_col <- paste0("patents_stock_in_new_products_h", h)
+    new_col <- paste0("new_patents_in_new_products_h", h)
+    share_stock_col <- paste0("share_stock_patent_in_new_products_h", h)
+    share_new_col <- paste0("share_new_patent_in_new_products_h", h)
+
+    patent_product_nace2d[, (share_stock_col) := fifelse(
+      total_patents > 0 , get(stock_col) / total_patents, NA_real_
+    )]
+    patent_product_nace2d[, (share_new_col) := fifelse(
+      new_patents > 0, get(new_col) / new_patents, NA_real_
+    )]
+  }
+
+  # delete intermediate variables to save memory
+  patent_product_nace2d[, c("prod_added", "number_of_products") := NULL]
+
+  # --- 5.7 Save dataset 2e ---------------------------------------------------
+  dir.create(paste0("2_product_data/", cpa_or_pf), showWarnings = FALSE, recursive = TRUE)
+  write_parquet(
+    patent_product_nace2d,
+    paste0("2_product_data/", cpa_or_pf, "/2e_firm_lvl_patent_product_nace2d_dta.parquet")
+  )
+}
 
 

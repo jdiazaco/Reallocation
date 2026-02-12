@@ -15,6 +15,9 @@ patenting_products <- read_rds("temp/patenting_products_firm_level.RDS")
 patenting_products <- as.data.table(patenting_products)
 setorder(patenting_products, firmid, year)
 
+# Load patent to product links
+nace_pat_prod <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2e_firm_lvl_patent_product_nace2d_dta.parquet"))
+
 # --- Parameters --------------------------------------------------------------
 conversion_windows <- c(2, 3, 5) # years: baseline=2, robustness=3,5
 burst_threshold <- 5
@@ -33,20 +36,17 @@ patenting_products[, p75_patents := quantile(num_pat_families, 0.75, na.rm = TRU
 patenting_products[, patent_burst := as.integer(num_pat_families > p90_patents)]
 patenting_products[, patent_burst_p75 := as.integer(num_pat_families > p75_patents)]
 
-# Firm size bin (quartiles)
-if ("firm_size" %in% names(patenting_products)) {
-  patenting_products[, size_bin := cut(firm_size, quantile(firm_size, probs=0:4/4, na.rm=TRUE), include.lowest=TRUE)]
-}
-
 # Firm age bin
 if ("firm_age" %in% names(patenting_products)) {
   patenting_products[, age_bin := cut(firm_age, breaks = c(0,5,10,20,100), labels = c("0-5","6-10","11-20","21+"), include.lowest=TRUE)]
 }
 
-# NACE4 (industry 4-digit)
-if ("NACE_BR" %in% names(patenting_products)) {
-  patenting_products[, NACE4 := substr(NACE_BR, 1, 4)]
-}
+# Leave patenting_products only with necessary columns
+patenting_products <- patenting_products[
+  ,
+  .(firmid, year, num_pat_families, number_of_products, prod_added, NACE_BR, burst, patent_burst, age_bin)
+]
+patenting_products <- merge(patenting_products, nace_pat_prod, by = c("firmid", "year"), all.x = TRUE, sort = TRUE)
 
 # --- 1. Identify Patent→Product Conversion -----------------------------------
 # For each firm-year, count patents filed in year t, and products added in t:(t+window)
@@ -65,29 +65,47 @@ for (w in conversion_windows) {
   ]
 }
 
+View(patenting_products[, .(firmid, year, num_pat_families, number_of_products, prod_added, future_products_2, converted_patents_2, nonconverted_patents_2)])
 
 # --- 2. Plot Conversion Rate by Year and Firm Size/Age -----------------------
 # Example for baseline window (2 years)
 patenting_products[, conversion_rate_2 := fifelse(num_pat_families > 0, converted_patents_2 / num_pat_families, NA_real_)]
+patenting_products[, nonconversion_rate_2 := fifelse(num_pat_families > 0, nonconverted_patents_2 / num_pat_families, NA_real_)]
 
 # Plot: mean conversion rate by year
-library(ggplot2)
-conv_by_year <- patenting_products[, .(mean_conv = mean(conversion_rate_2, na.rm=TRUE)), by=year]
+conv_by_year <- patenting_products[, .(
+  mean_conv = mean(conversion_rate_2, na.rm = TRUE),
+  mean_nonconverted = mean(nonconversion_rate_2, na.rm = TRUE)
+), by = year]
+
 print(ggplot(conv_by_year, aes(x=year, y=mean_conv)) +
   geom_line() +
   labs(title="Patent→Product Conversion Rate by Year", y="Conversion Rate", x="Year"))
 
+print(ggplot(conv_by_year, aes(x=year, y=mean_nonconverted)) +
+  geom_line() +
+  labs(title="Patent→Product Non-Conversion Rate by Year", y="Non-Conversion Rate", x="Year"))
+
+
 # Plot: by firm size/age bins (example: size quartiles)
-if ("size_bin" %in% names(patenting_products)) {
-  conv_by_year_size <- patenting_products[, .(mean_conv = mean(conversion_rate_2, na.rm=TRUE)), by=.(year, size_bin)]
-  print(ggplot(conv_by_year_size, aes(x=year, y=mean_conv, color=size_bin)) +
+if ("size_quartile" %in% names(patenting_products)) {
+  conv_by_year_size <- patenting_products[, .(
+    mean_conv = mean(conversion_rate_2, na.rm = TRUE),
+    mean_nonconv = mean(nonconversion_rate_2, na.rm = TRUE)
+  ), by = .(year, size_quartile)]
+  print(ggplot(conv_by_year_size[!is.na(size_quartile)], aes(x = year, y = mean_conv, color = as.factor(size_quartile))) +
     geom_line() +
-    labs(title="Conversion Rate by Year and Firm Size", y="Conversion Rate", x="Year"))
+    labs(title = "Conversion Rate by Year and Firm Size", y = "Conversion Rate", x = "Year", color = "Size Quartile"))
+  
+  print(ggplot(conv_by_year_size[!is.na(size_quartile)], aes(x=year, y=mean_nonconv, color=as.factor(size_quartile))) +
+    geom_line() +
+    labs(title="Non-Conversion Rate by Year and Firm Size", y="Non-Conversion Rate", x="Year", color="Size Quartile"))
+
 }
 
 # --- 3. Regression: Conversion Rate Trends -----------------------------------
 # Pooled regression (add FEs as needed)
-lm_conv <- lm(conversion_rate_2 ~ year, data=patenting_products)
+lm_conv <- feols(conversion_rate_2 ~ year | NACE_BR, data=patenting_products)
 summary(lm_conv)
 
 
@@ -205,15 +223,12 @@ if ("firm_age" %in% names(event_panel)) {
 # For each firm-year, define competitor set (same 4-digit industry)
 # Regress competitor product entry on leader's converted/non-converted patents
 
-# Assume NACE_BR is 4-digit industry code
-patenting_products[, NACE4 := substr(NACE_BR, 1, 4)]
-
 # For each firm-year, sum product entry of competitors (excluding focal firm)
 competitor_entry <- patenting_products[, .(
   competitor_prod_entry = sum(prod_added[firmid != .BY$firmid]),
   converted_patents_2 = unique(converted_patents_2),
   nonconverted_patents_2 = unique(nonconverted_patents_2)
-), by = .(NACE4, year, firmid)]
+), by = .(NACE_BR, year, firmid)]
 
 # Merge back leader's patent variables
 competitor_entry <- merge(competitor_entry, 
@@ -222,7 +237,7 @@ competitor_entry <- merge(competitor_entry,
 
 # Regression: competitor product entry on leader's converted/non-converted patents
 library(fixest)
-deterrence_model <- feols(competitor_prod_entry ~ converted_patents_2 + nonconverted_patents_2 | NACE4 + year, data = competitor_entry)
+deterrence_model <- feols(competitor_prod_entry ~ converted_patents_2 + nonconverted_patents_2 | NACE_BR + year, data = competitor_entry)
 summary(deterrence_model)
 
 # --- 6. Aggregate Dynamism Link ----------------------------------------------
@@ -233,11 +248,11 @@ industry_year <- patenting_products[, .(
   total_converted = sum(converted_patents_2, na.rm=TRUE),
   total_products = sum(prod_added, na.rm=TRUE),
   n_firms = .N
-), by = .(NACE4, year)]
+), by = .(NACE_BR, year)]
 industry_year[, conversion_rate := total_converted / total_patents]
 
 # Example: plot conversion rate vs product reallocation rate (proxy: std dev of prod_added)
-industry_year[, prod_reallocation := sd(total_products, na.rm=TRUE), by = NACE4]
+industry_year[, prod_reallocation := sd(total_products, na.rm=TRUE), by = NACE_BR]
 ggplot(industry_year, aes(x=conversion_rate, y=prod_reallocation)) +
   geom_point() +
   labs(title="Industry-Year: Conversion Rate vs Product Reallocation", x="Conversion Rate", y="Product Reallocation (SD)")
@@ -257,8 +272,8 @@ for (w in c(3,5)) {
 patenting_products[, burst_link := fifelse(burst == 1 & patent_burst == 1, "Both", 
                                     fifelse(burst == 1, "Product Only", 
                                     fifelse(patent_burst == 1, "Patent Only", "Neither")))]
-if ("size_bin" %in% names(patenting_products)) {
-  burst_table <- patenting_products[, .N, by = .(burst_link, size_bin)]
+if ("size_quartile" %in% names(patenting_products)) {
+  burst_table <- patenting_products[, .N, by = .(burst_link, size_quartile)]
   print(burst_table)
 }
 if ("age_bin" %in% names(patenting_products)) {
