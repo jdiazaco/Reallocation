@@ -474,6 +474,8 @@ write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_
   )
   for (v in count_vars_new_prods){
     patent_product_nace2d[!is.na(prod_added) & prod_added > 0, (v) := fifelse(is.na(get(v)), 0, get(v))]
+    patent_product_nace2d[prod_added == 0, (v) := NA_real_]
+    
   }
 
   # Shares: handle zero denominators
