@@ -190,7 +190,7 @@ exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
   
   # firm_industry_data <- read_parquet("firm_lists/firmid_NACE_BR_year.parquet")
 
-  if (grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  if (grepl("lse|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
   prodcom_sectors <- c("07", "08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
                        "26", "27", "28", "29", "30", "31", "32", "33", "42", "43", "45", "47", "58", "68", "70", 
                        "71", "72", "73", "77", "82", "95", "96")

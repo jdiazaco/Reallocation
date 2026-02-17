@@ -147,12 +147,7 @@ unique_vars <- c("consolidated_birth_year", "economic_death_year", "legal_birth_
 agg_product_data <- product_data[, lapply(.SD, sum, na.rm=T), .SDcols=vars, by=.(firmid, year)]
 product_summary_years <- product_data[, lapply(.SD, unique, na.rm=T), .SDcols=unique_vars, by=.(firmid, year)]
 agg_product_data <- merge(agg_product_data, product_summary_years, by = c("firmid", "year"), all.x = T)
-agg_product_data <- agg_product_data %>% .[!(rev==0 & status!="died")] 
-
-agg_product_data_temp <- growth_creator(agg_product_data, "rev", 1, create_born_died=T, data_type="survey") %>%
-  select("firmid", "year", names(.)[grepl("rev_", names(.))])
-agg_product_data <- merge(agg_product_data, agg_product_data_temp, by=c("firmid", "year"), all.x=T)
-rm(product_summary_years); gc()
+agg_product_data <- agg_product_data %>% .[!(rev==0 & status!="died")]
 
 # Rename variables
 setnames(agg_product_data,
@@ -231,9 +226,9 @@ table(agg_product_data[, .(n=.N), by=.(firmid, year)]$n)
 # Export firm-level product data
 write_parquet(agg_product_data, paste0("2_product_data/", cpa_or_pf, "/2c_firm_lvl_product_dta.parquet"))
 
-# 4) Create firm-level product-market competitors information
+# 4) Create firm-level product-market competitors information ------------------
 
-# load data ------------------
+# load data 
 product_data <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2a_product_yr_lvl_dta.parquet"))
 
 # 1) Create size measures: rank within product categories, size buckets (quartile, decile, percentile, 1000tile), leader and top_4_leaders
@@ -305,6 +300,7 @@ product_firm_data <- product_data[, .(leaders=list(unique(unlist(leader))),
                                       firms_in_pc=list(unique(unlist(firms_in_pc)))), by=.(firmid, year)]
 
 write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_product_competitors_dta.RDS"))
+
 # 5) Create firm-year patent-product NACE2 overlap dataset (2e) ------------------
 # Goal: combine NACE2d patenting information with product sectors at the firm-year level
 
@@ -498,9 +494,32 @@ write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_
       new_patents > 0, get(new_col) / new_patents, NA_real_
     )]
   }
-
+  
   # delete intermediate variables to save memory
   patent_product_nace2d[, c("prod_added", "number_of_products") := NULL]
+  
+  # --- Enforce full-window definition (match script 7) -------------------------
+  # Any horizon variable ending in _h{k} is set to NA if year+k is not observed for that firm.
+  setDT(patent_product_nace2d)
+  setorder(patent_product_nace2d, firmid, year)
+  patent_product_nace2d[, max_year_firm := max(year, na.rm = TRUE), by = firmid]
+  
+  h_cols <- grep("_h[0-9]+$", names(patent_product_nace2d), value = TRUE)
+  if (length(h_cols) > 0) {
+    h_vals <- sort(unique(as.integer(sub(".*_h([0-9]+)$", "\\1", h_cols))))
+    for (h in h_vals) {
+      cols_h <- h_cols[grepl(paste0("_h", h, "$"), h_cols)]
+      agg_product_data[year > (max_year_firm - h), (cols_h) := NA]
+    }
+  }
+  
+  # If a direct 2-year future-products variable exists, censor it too
+  if ("future_products_2" %in% names(agg_product_data)) {
+    agg_product_data[year > (max_year_firm - 2), future_products_2 := NA_real_]
+  }
+  
+  agg_product_data[, max_year_firm := NULL]
+  
 
   # --- 5.7 Save dataset 2e ---------------------------------------------------
   dir.create(paste0("2_product_data/", cpa_or_pf), showWarnings = FALSE, recursive = TRUE)
