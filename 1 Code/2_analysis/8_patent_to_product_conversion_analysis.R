@@ -248,8 +248,8 @@ m_burst_size <- feols(
 # Interaction: does the size gradient steepen over time?
 patenting_products[, year_c := year - min(year, na.rm = TRUE)]
 m_burst_size_trend <- feols(
-  get(paste0("conversion_rate_", w0)) ~ i(size_quartile, year_c, ref = 1) | NACE_BR,
-  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
+  as.formula(paste0("converted_patents_", w0, " ~ i(size_quartile, year_c, ref = 1) | NACE_BR")),
+  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)])
   
 
 
