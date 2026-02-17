@@ -343,9 +343,9 @@ write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_
   product_data_2a <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2a_product_yr_lvl_dta.parquet")) %>% setDT(.)
   product_data_2a[, firmid := as.character(firmid)]
 
-  # Current products: active product lines in the year (first_introduction/reintroduced/incumbent)
+  # Current products: active product lines in the year (reintroduced/incumbent)
   product_current <- product_data_2a[
-    (first_introduction | reintroduced | incumbent) & !is.na(NACE_2d_pf),
+    (reintroduced | incumbent) & !is.na(NACE_2d_pf),
     .(NACE2 = unique(NACE_2d_pf)),
     by = .(firmid, prod_year = year)
   ]
@@ -385,7 +385,7 @@ write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_
 
   # New products: horizons t, t+1, ..., t+5
   base_years <- firm_lvl_patent_data[, .(firmid, year)]
-  horizons <- 0:5
+  horizons <- c(0,2)
   newprod_stock_list <- list()
   newprod_new_list <- list()
 
@@ -468,9 +468,10 @@ write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_
     paste0("patents_stock_in_new_products_h", horizons),
     paste0("new_patents_in_new_products_h", horizons)
   )
+  
   for (v in count_vars_new_prods){
-    patent_product_nace2d[!is.na(prod_added) & prod_added > 0, (v) := fifelse(is.na(get(v)), 0, get(v))]
-    patent_product_nace2d[prod_added == 0, (v) := NA_real_]
+    patent_product_nace2d[!is.na(prod_added), (v) := fifelse(is.na(get(v)), 0, get(v))]
+    patent_product_nace2d[is.na(prod_added), (v) := NA_real_]
     
   }
 
@@ -495,33 +496,36 @@ write_rds(product_firm_data, paste0("2_product_data/", cpa_or_pf, "/2d_firm_lvl_
     )]
   }
   
-  # delete intermediate variables to save memory
-  patent_product_nace2d[, c("prod_added", "number_of_products") := NULL]
+  View(patent_product_nace2d %>% 
+         select(firmid, year, total_patents, new_patents, max_year_firm, prod_added, number_of_products,
+                patents_stock_in_current_products, new_patents_in_current_products,
+                patents_stock_in_new_products_h0, new_patents_in_new_products_h0,
+                share_stock_patent_in_new_products_h0, share_new_patent_in_new_products_h0,
+                patents_stock_in_new_products_h2, new_patents_in_new_products_h2,
+                share_stock_patent_in_new_products_h2, share_new_patent_in_new_products_h2,
+                share_stock_patent_in_current_products, share_new_patent_in_current_products) %>%
+         filter(firmid=="005720784") %>%
+         setorder(firmid, year))
   
   # --- Enforce full-window definition (match script 7) -------------------------
   # Any horizon variable ending in _h{k} is set to NA if year+k is not observed for that firm.
-  setDT(patent_product_nace2d)
   setorder(patent_product_nace2d, firmid, year)
-  patent_product_nace2d[, max_year_firm := max(year, na.rm = TRUE), by = firmid]
+  patent_product_nace2d[, max_year_firm := max(year[!is.na(number_of_products)], na.rm = TRUE), by = firmid]
   
   h_cols <- grep("_h[0-9]+$", names(patent_product_nace2d), value = TRUE)
   if (length(h_cols) > 0) {
     h_vals <- sort(unique(as.integer(sub(".*_h([0-9]+)$", "\\1", h_cols))))
     for (h in h_vals) {
       cols_h <- h_cols[grepl(paste0("_h", h, "$"), h_cols)]
-      agg_product_data[year > (max_year_firm - h), (cols_h) := NA]
+      patent_product_nace2d[year > (max_year_firm - h), (cols_h) := NA]
     }
   }
   
-  # If a direct 2-year future-products variable exists, censor it too
-  if ("future_products_2" %in% names(agg_product_data)) {
-    agg_product_data[year > (max_year_firm - 2), future_products_2 := NA_real_]
-  }
+  patent_product_nace2d[, max_year_firm := NULL]
+  # delete intermediate variables to save memory
+  patent_product_nace2d[, c("prod_added", "number_of_products") := NULL]
   
-  agg_product_data[, max_year_firm := NULL]
-  
-
-  # --- 5.7 Save dataset 2e ---------------------------------------------------
+    # --- 5.7 Save dataset 2e ---------------------------------------------------
   dir.create(paste0("2_product_data/", cpa_or_pf), showWarnings = FALSE, recursive = TRUE)
   write_parquet(
     patent_product_nace2d,

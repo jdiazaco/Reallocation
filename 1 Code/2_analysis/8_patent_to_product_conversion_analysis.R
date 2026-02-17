@@ -46,7 +46,7 @@ if ("firm_age" %in% names(patenting_products)) {
 # Leave patenting_products only with necessary columns
 patenting_products <- patenting_products[
   ,
-  .(firmid, year, num_pat_families, number_of_products, prod_added, NACE_BR, burst, patent_burst, age_bin)
+  .(firmid, year, num_pat_families, number_of_products, prod_added, NACE_BR, burst, patent_burst, size_quartile, age_bin)
 ]
 patenting_products <- merge(patenting_products, 
                             nace_pat_prod , 
@@ -61,8 +61,7 @@ for (w in conversion_windows) {
     shift(frollsum(prod_added, n = w + 1, align = "left"), type = "lead", n = 0), by = firmid]
   # Number of converted patents: min(patents, future products)
   patenting_products[, paste0("converted_patents_", w) := 
-    pmin(1, num_pat_families, get(paste0("future_products_", w)))
-  ]
+                       fifelse(num_pat_families>0, pmin(1, num_pat_families, get(paste0("future_products_", w))), NA_real_)]
   # Non-converted patents: remainder
   patenting_products[, paste0("nonconverted_patents_", w) := 
     1 - get(paste0("converted_patents_", w))
@@ -134,6 +133,128 @@ if ("size_quartile" %in% names(patenting_products)) {
       facet_wrap(~ size_quartile)
   )
 }
+
+
+
+
+
+# --- Parameters ---------------------------------------------------------------
+# Conversion windows in YEARS (baseline=2; robustness=0,3,5)
+conversion_windows <- c(0, 2, 3, 5)
+
+# Burst thresholds
+# Product burst: number of new products added in year t
+product_burst_threshold_main <- 5
+product_burst_thresholds <- c(2, 5, 10)
+
+# Patent burst: within-firm percentile threshold
+patent_burst_quantile_main <- 0.90
+patent_burst_quantiles <- c(0.75, 0.90)
+
+# Event-study window
+event_window <- 4
+
+# Baseline window
+w0 <- 2
+
+# --- 2) Define bursts (CENTRAL TO STORY) -------------------------------------
+# Product bursts
+patenting_products[, product_burst := as.integer(prod_added >= product_burst_threshold_main)]
+for (k in product_burst_thresholds) {
+  patenting_products[, (paste0("product_burst_", k)) := as.integer(prod_added >= k)]
+}
+
+# Patent bursts (within-firm percentile)
+for (q in patent_burst_quantiles) {
+  qname <- paste0("p", as.integer(100 * q), "_patents")
+  bname <- paste0("patent_burst_p", as.integer(100 * q))
+  patenting_products[, (qname) := quantile(num_pat_families, q, na.rm = TRUE), by = firmid]
+  patenting_products[, (bname) := as.integer(num_pat_families > get(qname))]
+}
+
+patenting_products[, patent_burst := get(paste0("patent_burst_p", as.integer(100 * patent_burst_quantile_main)))]
+
+# Combined burst year: either product burst or patent burst
+patenting_products[, burst_year := as.integer(product_burst == 1 | patent_burst == 1)]
+
+# --- 3) FACT A: Bursts increasingly consist of nonconverted patents -----------
+# (i) Among burst-year patenting observations, compute nonconversion share over time
+burst_patents_ts <- patenting_products[burst_year == 1 & num_pat_families > 0,
+                                       .(
+                                         total_patents = sum(num_pat_families, na.rm = TRUE),
+                                         total_nonconverted = sum(get(paste0("nonconverted_patents_", w0)), na.rm = TRUE),
+                                         mean_nonconversion = mean(get(paste0("nonconverted_patents_", w0)), na.rm = TRUE),
+                                         mean_conversion = mean(get(paste0("converted_patents_", w0)), na.rm = TRUE)
+                                       ),
+                                       by = year
+]
+burst_patents_ts[, share_nonconverted := total_nonconverted / total_patents]
+
+p_burst_nonconv <- ggplot(burst_patents_ts, aes(x = year)) +
+  # geom_line(aes(y = share_nonconverted, color = "Share nonconverted (burst-year patents)")) +
+  geom_line(aes(y = mean_nonconversion, color = "Mean nonconversion rate (firm-year)"), linetype = "dashed") +
+  labs(
+    title = "Bursts increasingly consist of nonconverted patents",
+    subtitle = paste0("Baseline conversion window = ", w0, " years"),
+    x = "Year",
+    y = "Nonconversion",
+    color = NULL
+  ) +
+  theme_minimal()
+print(p_burst_nonconv)
+
+ggsave("output/module8/fig_burst_nonconversion_trend.png", p_burst_nonconv, width = 9, height = 5)
+
+# Regression version (trend)
+# Interpretation: positive coef means nonconversion within bursts rises over time
+m_burst_nonconv_trend <- feols(
+  get(paste0("nonconversion_rate_", w0)) ~ year | NACE_BR,
+  data = patenting_products[burst_year == 1 & num_pat_families > 0]
+)
+
+# --- 4) FACT B: Bursts by large firms are less product-generating -------------
+# Compare conversion in burst years by size quartile and over time
+burst_by_size <- patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile),
+                                    .(
+                                      mean_conv = mean(get(paste0("converted_patents_", w0)), na.rm = TRUE),
+                                      mean_nonconv = mean(get(paste0("nonconverted_patents_", w0)), na.rm = TRUE),
+                                      n = .N
+                                    ),
+                                    by = .(year, size_quartile)
+]
+
+p_burst_size <- ggplot(burst_by_size, aes(x = year, y = mean_conv, color = as.factor(size_quartile))) +
+  geom_line() +
+  facet_wrap(~ size_quartile) +
+  labs(
+    title = "Burst-years: Conversion is lower for larger firms",
+    subtitle = paste0("Baseline conversion window = ", w0, " years"),
+    x = "Year",
+    y = "Mean conversion rate",
+    color = "Size quartile"
+  ) +
+  theme_minimal()
+
+print(p_burst_size)
+
+ggsave("output/module8/fig_burst_conversion_by_size.png", p_burst_size, width = 10, height = 6)
+
+# Regression: conversion in burst years ~ size + trend (industry FE)
+m_burst_size <- feols(
+  get(paste0("converted_patents_", w0)) ~ i(size_quartile, ref = 1) + year | NACE_BR,
+  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
+)
+
+# Interaction: does the size gradient steepen over time?
+patenting_products[, year_c := year - min(year, na.rm = TRUE)]
+m_burst_size_trend <- feols(
+  get(paste0("conversion_rate_", w0)) ~ i(size_quartile, year_c, ref = 1) | NACE_BR,
+  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
+  
+
+
+
+
 
 # --- 3. Regression: Conversion Rate Trends -----------------------------------
 # Pooled regression (add FEs as needed)
