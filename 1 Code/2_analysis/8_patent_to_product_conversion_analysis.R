@@ -120,7 +120,7 @@ if ("size_quartile" %in% names(patenting_products)) {
   ), by = .(year, size_quartile)]
 
   print(
-    ggplot(conv_by_year_size[!is.na(size_quartile)], aes(x = year, color = as.factor(size_quartile), group = as.factor(size_quartile))) +
+    ggplot(conv_by_year_size[!is.na(size_quartile) & size_quartile %in% c(1, 4)], aes(x = year, color = as.factor(size_quartile), group = as.factor(size_quartile))) +
       geom_line(aes(y = mean_conv_specific_2, linetype = "Specific (2yr)")) +
       geom_line(aes(y = mean_conv_specific_0, linetype = "Specific (0yr)")) +
       labs(
@@ -130,7 +130,7 @@ if ("size_quartile" %in% names(patenting_products)) {
         color = "Size Quartile"
       ) +
       theme_minimal() +
-      facet_wrap(~ size_quartile)
+      facet_wrap(~size_quartile)
   )
 }
 
@@ -181,14 +181,12 @@ patenting_products[, burst_year := as.integer(product_burst == 1 | patent_burst 
 # (i) Among burst-year patenting observations, compute nonconversion share over time
 burst_patents_ts <- patenting_products[burst_year == 1 & num_pat_families > 0,
                                        .(
-                                         total_patents = sum(num_pat_families, na.rm = TRUE),
-                                         total_nonconverted = sum(get(paste0("nonconverted_patents_", w0)), na.rm = TRUE),
                                          mean_nonconversion = mean(get(paste0("nonconverted_patents_", w0)), na.rm = TRUE),
                                          mean_conversion = mean(get(paste0("converted_patents_", w0)), na.rm = TRUE)
                                        ),
                                        by = year
 ]
-burst_patents_ts[, share_nonconverted := total_nonconverted / total_patents]
+burst_patents_ts[, share_nonconverted := mean_nonconversion / (mean_nonconversion + mean_conversion)]
 
 p_burst_nonconv <- ggplot(burst_patents_ts, aes(x = year)) +
   # geom_line(aes(y = share_nonconverted, color = "Share nonconverted (burst-year patents)")) +
@@ -208,7 +206,7 @@ ggsave("output/module8/fig_burst_nonconversion_trend.png", p_burst_nonconv, widt
 # Regression version (trend)
 # Interpretation: positive coef means nonconversion within bursts rises over time
 m_burst_nonconv_trend <- feols(
-  get(paste0("nonconversion_rate_", w0)) ~ year | NACE_BR,
+  as.formula(paste0("nonconverted_patents_", w0, " ~ year | NACE_BR")),
   data = patenting_products[burst_year == 1 & num_pat_families > 0]
 )
 
@@ -241,17 +239,27 @@ ggsave("output/module8/fig_burst_conversion_by_size.png", p_burst_size, width = 
 
 # Regression: conversion in burst years ~ size + trend (industry FE)
 m_burst_size <- feols(
-  get(paste0("converted_patents_", w0)) ~ i(size_quartile, ref = 1) + year | NACE_BR,
+  as.formula(paste0("converted_patents_", w0, " ~ i(size_quartile, ref = 1) + year | NACE_BR")),
   data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
 )
+
+# Simple regression: is conversion higher for larger vs smaller firms?
+m_burst_size_simple <- feols(
+  as.formula(paste0("converted_patents_", w0, " ~ i(size_quartile, ref = 1) | NACE_BR")),
+  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
+)
+m_burst_size_simple <- feols(
+  as.formula(paste0("share_new_patent_in_new_products_h", w0, " ~ i(size_quartile, ref = 1) | NACE_BR")),
+  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
+)
+
 
 # Interaction: does the size gradient steepen over time?
 patenting_products[, year_c := year - min(year, na.rm = TRUE)]
 m_burst_size_trend <- feols(
   as.formula(paste0("converted_patents_", w0, " ~ i(size_quartile, year_c, ref = 1) | NACE_BR")),
-  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)])
-  
-
+  data = patenting_products[burst_year == 1 & num_pat_families > 0 & !is.na(size_quartile)]
+)
 
 
 
