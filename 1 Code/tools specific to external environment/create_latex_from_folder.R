@@ -45,18 +45,18 @@ create_latex_from_folder <- function(folder_path, relative_root, output_tex = "M
     # if(grepl("\\.pdf$", f)){
     #   latex_content <- c(latex_content, paste0("\\includepdf[pages=-]{", paste0(relative_root, f), "}"))
     # }
-    if(grepl("\\.(png|jpg|jpeg|bmp)$", f, ignore.case = TRUE)){
-      latex_content <- c(
-        latex_content,
-        "\\begin{figure}[H]",
-        paste0("  \\centering", 
-               "  \\includegraphics[width=\\linewidth]{", 
-               paste0(gsub("_", "\\\\_", relative_root) , gsub("_", "\\\\_", f)), "}"),
-        # paste0("  \\label{", paste0(gsub("_", "\\\\_", relative_root) , gsub("_", "\\\\_", f)), "}"),
-        "\\end{figure}"
-      )
-      
-    }
+    # if(grepl("\\.(png|jpg|jpeg|bmp)$", f, ignore.case = TRUE)){
+    #   latex_content <- c(
+    #     latex_content,
+    #     "\\begin{figure}[H]",
+    #     paste0("  \\centering", 
+    #            "  \\includegraphics[width=\\linewidth]{", 
+    #            paste0(gsub("_", "\\\\_", relative_root) , gsub("_", "\\\\_", f)), "}"),
+    #     # paste0("  \\label{", paste0(gsub("_", "\\\\_", relative_root) , gsub("_", "\\\\_", f)), "}"),
+    #     "\\end{figure}"
+    #   )
+    #   
+    # }
     
   }
   
@@ -99,7 +99,7 @@ create_latex_from_folder <- function(folder_path, relative_root, output_tex = "M
   message("LaTeX file created at: ", file.path(folder_path, output_tex))
 }
 
-folder_path<-"G:/My Drive/IWH/PhD/Reallocation/Exports/2025/NEWPROD_DC9FEE06BAB48D5BED0BD22CED2A6F88_20251126/"
+folder_path<-"G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/3 Output/2026/Export 21.01"
 relative_root<-""
 output_tex = "Main.tex"
 

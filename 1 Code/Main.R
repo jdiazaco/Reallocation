@@ -8,13 +8,16 @@ options(
 )
 
 
-packages = c('data.table', 'haven', 'readxl', 'openxlsx', 'readr', 'dplyr', 
-             'tidyverse', 'zoo', 'reshape2','rstudioapi', "plm", 'foreign', 
-             'haven', 'stringr', 'readr', 'dplyr',
-             'ggplot2', 'tidyverse', 'rstudioapi', 'zoo', 'reshape2',
-             'patchwork', 'latex2exp', "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom", 
-             "xtable", "arrow", "tools", "marginaleffects", "purrr",
-             "AER", "fixest", "lfe", "lintr", "httr", "jsonlite", "ineq")
+packages = c(
+  "data.table", "haven", "readxl", "openxlsx", "readr", "dplyr",
+  "tidyverse", "zoo", "reshape2", "rstudioapi", "plm", "foreign",
+  "haven", "stringr", "readr", "dplyr",
+  "ggplot2", "tidyverse", "rstudioapi", "zoo", "reshape2",
+  "patchwork", "latex2exp", "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom",
+  "xtable", "arrow", "tools", "marginaleffects", "purrr",
+  "AER", "fixest", "lfe", "lintr", "httr", "jsonlite", "ineq",
+"kableExtra", "knitr", "ggpubr", "ggrepel", "gridExtra", "ggtext", "ggforce"
+)
 
 
 installed_packages <- packages %in% rownames(installed.packages())
@@ -73,6 +76,7 @@ source(paste0(tools_dir, "create_formulas.R"))
 source(paste0(tools_dir, "regression_innovation_growth.R"))
 source(paste0(tools_dir, "remove_special_chars.R"))
 source(paste0(tools_dir, "core_switch_product.R"))
+source(paste0(tools_dir, "create_latex_table.R"))
 # source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
 source(paste0(tools_dir, "create_lags.R"))
 source(paste0(tools_dir, "winsorize.R"))
