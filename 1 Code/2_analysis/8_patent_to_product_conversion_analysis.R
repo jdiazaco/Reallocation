@@ -529,6 +529,7 @@ for (x_name in names(x_vars)) {
       p_size_over_time <- ggplot(results_size[!(size_bin %in% c("1-4", "5-9"))], aes(x = time, y = beta, color = type, fill = type, group = type)) +
         geom_ribbon(aes(ymin = ci_low, ymax = ci_high), alpha = 0.15, color = NA) +
         geom_line(linewidth = 0.7) +
+        geom_point(size = 2) +
         facet_wrap(~size_bin) +
         theme_minimal() +
         labs(
