@@ -16,7 +16,8 @@ packages = c(
   "patchwork", "latex2exp", "RColorBrewer", "texreg", "stargazer", "modelsummary", "broom",
   "xtable", "arrow", "tools", "marginaleffects", "purrr",
   "AER", "fixest", "lfe", "lintr", "httr", "jsonlite", "ineq",
-"kableExtra", "knitr", "ggpubr", "ggrepel", "gridExtra", "ggtext", "ggforce"
+"kableExtra", "knitr", "ggpubr", "ggrepel", "gridExtra", "ggtext", "ggforce",
+ "emmeans", "marginaleffects", "modelsummary", "broom"
 )
 
 

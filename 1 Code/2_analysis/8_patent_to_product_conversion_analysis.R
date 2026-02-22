@@ -12,6 +12,11 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 # --- Data Loading ------------------------------------------------------------
 # Always load the main dataset explicitly (standalone script)
 patenting_products <- read_rds("temp/patenting_products_firm_level.RDS")
+
+test <- feols(nq_growth ~ young*size, data=patenting_products)
+vcov_size_age   <- vcov(test)
+
+
 patenting_products <- as.data.table(patenting_products)
 setorder(patenting_products, firmid, year)
 
@@ -79,7 +84,9 @@ patenting_products <- patenting_products[
   num_pat_families, number_of_products, prod_added, age_bin, 
   tm_dummy,
   product_burst, product_nonburst, patent_burst, patent_nonburst, 
-    nq_growth, empl_growth, capital_growth, size_bin,
+  nq_growth, empl_growth, capital_growth, 
+  nq_bar, empl_bar, capital_bar,
+  size_bin,
     size_quartile, size_decile, size_percentile, size_1000tile, top_4_leaders, top_10_leaders)
 ]
 patenting_products <- merge(patenting_products, 
@@ -121,6 +128,10 @@ for (w in conversion_windows) {
     1 - get(paste0("converted_patents_", w))
   ]
 }
+
+View(patenting_products[, .(firmid, year, num_pat_families, prod_added, future_products_2, converted_patents_2, nonconverted_patents_2,
+                             future_prod_burst2, future_prod_nonburst2, burst_patent_to_burst_products_2, burst_patent_to_non_burst_products_2,
+                             non_burst_patent_to_burst_products_2, non_burst_patent_to_non_burst_products_2)])
 
  # --- 1 Conversion rates by size and age bin ---
  baseline_window <- 2
@@ -165,6 +176,13 @@ y_labels <- c(
   empl_growth = "Employment Growth",
   capital_growth = "Capital Growth"
 )
+
+y_weights <- c(
+  nq_growth = "nq_bar",
+  empl_growth = "empl_bar",
+  capital_growth = "capital_bar"
+)
+
 x_vars <- conversion_rates_vars
 
 
@@ -176,6 +194,7 @@ x_vars <- conversion_rates_vars
 event_window <- 4  # years before/after
 
 for (x_name in names(x_vars)) {
+  
   x_var <- x_vars[[x_name]]
   stop()
 
@@ -207,7 +226,6 @@ for (x_name in names(x_vars)) {
   first_treat_year <- patenting_products[get(x_var) > 0, .(first_treat_year = min(year)), by = firmid]
   patenting_products <- merge(patenting_products, first_treat_year, by = "firmid", all.x = TRUE, sort = FALSE)
   patenting_products[!is.na(first_treat_year), event_time := first_treat_year]
-  View(patenting_products %>% select(firmid, year, x_var, first_treat_year, event_time))
   patenting_products[, event_time := fifelse(is.na(event_time), 10000, event_time)]
 
   patenting_products[, first_treat_year := NULL]
@@ -232,62 +250,305 @@ for (x_name in names(x_vars)) {
     )
     dev.off()
 
-  }
+    w_name <- y_weights[y_var]
+    weight_vec <- patenting_products[[w_name]]
 
-  # --- Classic Event Study by Event-Year Size/Age Bin ---
-  for (group_var in c("size_bin", "age_bin")) {
-    group_label <- ifelse(group_var == "size_bin", "Size Bin", "Age Bin")
-    event_group_var <- paste0("event_", group_var)
+    # Start formulas
+    formula_size <- as.formula(paste0(y_var, " ~ "))
+    formula_age <- as.formula(paste0(y_var, " ~ "))
+    formula_size_age <- as.formula(paste0(y_var, " ~ "))
 
-    if (!event_group_var %in% names(event_panel)) {
-      event_panel[, year_to_add_size_age := year - rel_year]
-      group_dt <- patenting_products[, .(firmid, year, group_value = get(group_var))]
-      setnames(group_dt, "group_value", event_group_var)
-      event_panel <- merge(event_panel,
-        group_dt,
-        by.x = c("firmid", "year_to_add_size_age"),
-        by.y = c("firmid", "year"),
-        all.x = TRUE
-      )
-    }
+    # Create dummies for years before and after event (relative to event year)
+    patenting_products <- lead_lag_creator(patenting_products, y_var, n_lags = event_window, to_dummy = FALSE)
+    View(patenting_products %>% select(firmid, year, starts_with(y_var)))
+    
+    #
+    results_age <- list()
+    results_size <- list()
 
-    for (y_var in y_vars) {
-      y_label <- unname(y_labels[y_var])
-      event_panel_group <- event_panel[!is.na(get(event_group_var)),
-        .(
-          mean_outcome = mean(get(y_var), na.rm = TRUE),
-          se_outcome = sd(get(y_var), na.rm = TRUE) / sqrt(.N)
-        ),
-        by = .(rel_year, group = get(event_group_var))
-      ]
-      event_panel_group[, ci_low := mean_outcome - 1.96 * se_outcome]
-      event_panel_group[, ci_high := mean_outcome + 1.96 * se_outcome]
-        ggplot(event_panel_group, aes(x = rel_year, y = mean_outcome, color = as.factor(group), group = as.factor(group))) +
-          geom_line() +
-          geom_ribbon(aes(ymin = ci_low, ymax = ci_high, fill = as.factor(group)), alpha = 0.2, color = NA) +
-          labs(title = paste0("Event Study: ", y_label, " by ", group_label, " (", x_name, ")"), x = "Years from Event", y = y_label) +
-          theme_minimal()
-        ggsave(paste0(output_dir, "/event_study_", x_name, "_", y_var, "_", group_var, ".png"), width = 8, height = 6)
-
-      for (k in unique(event_panel_group$rel_year)) {
-          ggplot(event_panel_group[rel_year == k], aes(x = group, y = mean_outcome, fill = as.factor(group))) +
-            geom_bar(stat = "identity") +
-            geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
-            labs(title = paste0("Event Study: ", y_label, " by ", group_label, " (", x_name, ") - Year ", k), x = group_label, y = y_label) +
-            theme_minimal() +
-            theme(legend.position = "none")
-          ggsave(paste0(output_dir, "/event_study_", x_name, "_", y_var, "_", group_var, "_year_", k, ".png"), width = 8, height = 6)
+    for(i in -event_window:(event_window)) {
+      
+      y_var_adj <- if (i == 0) {
+        y_var
+      } else if (i < 0) {
+        paste0(y_var, "_lag", abs(i))
+      } else {
+        paste0(y_var, "_lead", i)
       }
+
+    model_size <- lm(
+      as.formula(paste0(y_var_adj, " ~ ", x_var, " * size_bin")),
+      data = patenting_products,
+      weights = weight_vec
+    )
+    model_age <- lm(
+      as.formula(paste0(y_var_adj, " ~ ", x_var, " * age_bin")),
+      data = patenting_products,
+      weights = weight_vec
+    )
+    model_size_age <- lm(
+      as.formula(paste0(y_var_adj, " ~ ", x_var, " * size_bin * age_bin")),
+      data = patenting_products,
+      weights = weight_vec
+    )
+    
+    slopes_size <- as.data.frame(
+      emtrends(model_size, specs = ~size_bin, var = x_var, infer = c(TRUE, TRUE))
+    )
+    slopes_age <- as.data.frame(
+      emtrends(model_age, specs = ~age_bin, var = x_var, infer = c(TRUE, TRUE))
+    )
+    emtrends_size_age_obj <- emtrends(model_size_age, specs = ~size_bin * age_bin, var = x_var, infer = c(TRUE, TRUE))
+    slopes_size_age <- as.data.frame(emtrends_size_age_obj)
+    vcov_size_age   <- vcov(emtrends_size_age_obj)
+    
+    slope_col <- paste0(x_var, ".trend")
+    
+    age_weights <- patenting_products[
+      ,
+      .(w_age = sum(get(w_name), na.rm = TRUE)),
+      by = age_bin
+    ] %>%
+      mutate(w_age = w_age / sum(w_age))
+    
+    size_weights <- patenting_products[
+      ,
+      .(w_size = sum(get(w_name), na.rm = TRUE)),
+      by = size_bin
+    ] %>%
+      mutate(w_size = w_size / sum(w_size))
+    
+    # Tag row indices before joins so we can slice vcov_size_age by position
+    slopes_size_age_idx <- slopes_size_age %>% mutate(.row_idx = row_number())
+    
+    # Correct SE via sqrt(w' Σ w) using the full covariance matrix of cell slopes
+    vcov_se_size <- slopes_size_age_idx %>%
+      left_join(age_weights, by = "age_bin") %>%
+      group_by(size_bin) %>%
+      group_modify(~ {
+        keep <- !is.na(.x[[slope_col]]) & !is.na(.x$w_age)
+        sub  <- .x[keep, ]
+        idx  <- sub$.row_idx
+        w    <- sub$w_age
+        data.frame(se_size_age_control_vcov = sqrt(as.numeric(w %*% vcov_size_age[idx, idx, drop = FALSE] %*% w)))
+      }) %>%
+      ungroup()
+    
+    vcov_se_age <- slopes_size_age_idx %>%
+      left_join(size_weights, by = "size_bin") %>%
+      group_by(age_bin) %>%
+      group_modify(~ {
+        keep <- !is.na(.x[[slope_col]]) & !is.na(.x$w_size)
+        sub <- .x[keep, ]
+        idx <- sub$.row_idx
+        w <- sub$w_size
+        data.frame(se_age_size_control_vcov = sqrt(as.numeric(w %*% vcov_size_age[idx, idx, drop = FALSE] %*% w)))
+      }) %>%
+      ungroup()
+    
+    # setDT(size_effects)
+    # size_effects[, test := se_size_age_control_vcov - se_size_age_control]
+    
+    size_effects <- slopes_size_age %>%
+      left_join(age_weights, by = "age_bin") %>%
+      group_by(size_bin) %>%
+      summarise(
+        beta_size_age_control = sum(.data[[slope_col]] * w_age, na.rm = TRUE),
+        se_size_age_control   = sqrt(sum((w_age ^ 2) * (.data[["SE"]] ^ 2), na.rm = TRUE)),  # naive: assumes independence
+        .groups = "drop"
+      ) %>%
+      left_join(vcov_se_size, by = "size_bin") %>%  # correct: sqrt(w' Σ w)
+      left_join(
+        slopes_size %>%
+          transmute(
+            size_bin,
+            beta_size = .data[[slope_col]],
+            se_size = .data[["SE"]]
+          ),
+        by = "size_bin"
+      )
+    
+    age_effects <- slopes_size_age %>%
+      left_join(size_weights, by = "size_bin") %>%
+      group_by(age_bin) %>%
+      summarise(
+        beta_age_size_control = sum(.data[[slope_col]] * w_size, na.rm = TRUE),
+        se_age_size_control   = sqrt(sum((w_size ^ 2) * (.data[["SE"]] ^ 2), na.rm = TRUE)),  # naive: assumes independence
+        .groups = "drop"
+      ) %>%
+      left_join(vcov_se_age, by = "age_bin") %>%  # correct: sqrt(w' Σ w)
+      left_join(
+        slopes_age %>%
+          transmute(
+            age_bin,
+            beta_age = .data[[slope_col]],
+            se_age = .data[["SE"]]
+          ),
+        by = "age_bin"
+      )
+    
+    # Plot size effects
+    plot_data_size <- size_effects %>%
+      select(size_bin, beta_size, se_size, beta_size_age_control, se_size_age_control) %>%
+      pivot_longer(
+      cols = starts_with("beta_"),
+      names_to = "type",
+      values_to = "beta",
+      names_prefix = "beta_"
+      ) %>%
+      left_join(
+      size_effects %>%
+        select(size_bin, beta_size, se_size, beta_size_age_control, se_size_age_control) %>%
+        pivot_longer(
+        cols = starts_with("se_"),
+        names_to = "type",
+        values_to = "se",
+        names_prefix = "se_"
+        ),
+      by = c("size_bin", "type")
+      ) %>%
+      mutate(
+      ci_low = beta - 1.96 * se,
+      ci_high = beta + 1.96 * se,
+      type = factor(type, levels = c("size", "size_age_control"),
+              labels = c("Direct (size-only)", "Age-weighted"))
+      )
+
+      # Add to results list
+      setDT(plot_data_size)
+      results_size[[as.character(i)]] <- plot_data_size[, time := i]
+
+    p_size <- ggplot(plot_data_size, aes(x = size_bin, y = beta, color = type, fill = type, group = type)) +
+      geom_ribbon(aes(ymin = ci_low, ymax = ci_high), alpha = 0.15, color = NA) +
+      geom_line(linewidth = 0.7) +
+      geom_point(size = 2) +
+      theme_minimal() +
+      theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(
+      title = paste0(x_name, " \u2192 ", y_labels[y_var], " (Size)"),
+      subtitle = paste0("Time: ", i, " years from event"),
+      x = "Size bin",
+      y = "Estimated effect",
+      color = "Effect",
+      fill = "Effect"
+      )
+
+    print(p_size)
+    ggsave(
+      paste0(output_dir, "/effect_", x_name, "_", y_var, "_size_bin_", i, ".png"),
+      plot = p_size,
+      width = 8,
+      height = 6
+    )
+
+    # Plot age effects
+    plot_data_age <- age_effects %>%
+      select(age_bin, beta_age, se_age, beta_age_size_control, se_age_size_control) %>%
+      pivot_longer(
+      cols = starts_with("beta_"),
+      names_to = "type",
+      values_to = "beta",
+      names_prefix = "beta_"
+      ) %>%
+      left_join(
+      age_effects %>%
+        select(age_bin, beta_age, se_age, beta_age_size_control, se_age_size_control) %>%
+        pivot_longer(
+        cols = starts_with("se_"),
+        names_to = "type",
+        values_to = "se",
+        names_prefix = "se_"
+        ),
+      by = c("age_bin", "type")
+      ) %>%
+      mutate(
+      ci_low = beta - 1.96 * se,
+      ci_high = beta + 1.96 * se,
+      type = factor(type, levels = c("age", "age_size_control"),
+              labels = c("Direct (age-only)", "Size-weighted"))
+      )
+
+      # Add to results list
+      setDT(plot_data_age)
+      results_age[[as.character(i)]] <- plot_data_age[, time := i]
+
+
+    p_age <- ggplot(plot_data_age, aes(x = age_bin, y = beta, color = type, fill = type, group = type)) +
+      geom_ribbon(aes(ymin = ci_low, ymax = ci_high), alpha = 0.15, color = NA) +
+      geom_line(linewidth = 0.7) +
+      geom_point(size = 2) +
+      theme_minimal() +
+      theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(
+      title = paste0(x_name, " \u2192 ", y_labels[y_var], " (Age)"),
+      subtitle = paste0("Time: ", i, " years from event"),
+      x = "Age bin",
+      y = "Estimated effect",
+      color = "Effect",
+      fill = "Effect"
+      )
+
+    print(p_age)
+    ggsave(
+      paste0(output_dir, "/effect_", x_name, "_", y_var, "_age_bin_", i, ".png"),
+      plot = p_age,
+      width = 8,
+      height = 6
+    )
+
     }
+
+    results_age <- rbindlist(results_age)
+    results_age[, age_bin := factor(age_bin, levels = c("0", "1-2", "3-5", "6-10", "11-20", "21+"))]
+    results_age <- results_age %>% setorder(age_bin)
+        p_age_over_time <- ggplot(results_age, aes(x = time, y = beta, color = type, fill = type, group = type)) +
+      geom_ribbon(aes(ymin = ci_low, ymax = ci_high), alpha = 0.15, color = NA) +
+      geom_line(linewidth = 0.7) +
+      geom_point(size = 2) +
+      facet_wrap(~age_bin) +
+      theme_minimal() +
+      labs(
+        title = paste0(x_name, " \u2192 ", y_labels[y_var], " (Age: ", age_bin_particular, ")"),
+        x = "Time from event (years)",
+        y = "Estimated effect",
+        color = "Effect",
+        fill = "Effect"
+      )
+      print(p_age_over_time)
+      ggsave(
+        paste0(output_dir, "/effect_over_time_", x_name, "_", y_var, "_age_bin_", age_bin_particular, ".png"),
+        plot = p_age_over_time,
+        width = 8,
+        height = 6
+
+
+
+
+    results_size <- rbindlist(results_size)
+    results_size[, size_bin := factor(size_bin, levels = c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+"))]
+      p_size_over_time <- ggplot(results_size[!(size_bin %in% c("1-4", "5-9"))], aes(x = time, y = beta, color = type, fill = type, group = type)) +
+        geom_ribbon(aes(ymin = ci_low, ymax = ci_high), alpha = 0.15, color = NA) +
+        geom_line(linewidth = 0.7) +
+        facet_wrap(~size_bin) +
+        theme_minimal() +
+        labs(
+          title = paste0(x_name, " \u2192 ", y_labels[y_var], " (Size: ", size_bin_particular, ")"),
+          x = "Time from event (years)",
+          y = "Estimated effect",
+          color = "Effect",
+          fill = "Effect"
+        )
+      print(p_size_over_time)
+      ggsave(
+        paste0(output_dir, "/effect_over_time_", x_name, "_", y_var, "_size_bin_", size_bin_particular, ".png"),
+        plot = p_size_over_time,
+        width = 8,
+        height = 6
+      )
+
   }
-
-
 }
 
-# --- Event Study by Initial Size and Age Category ---
-# For each event, assign the event-year size and age category to all event window observations ("frozen" at event year)
-
-# 1. By Size
 
 # --- 5. Deterrence Test: Competitor Product Entry ----------------------------
 # For each firm-year, define competitor set (same 4-digit industry)

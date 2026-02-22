@@ -292,12 +292,14 @@ for(var in c("prod_added", "num_pat_families", "number_of_products")){
 
 patent_records <- read_parquet("3_patent_lvl_patent_dta.parquet")
 patent_citation <- readRDS("3b_patent_citation_summary.rds") %>% setDT()
-product_data <- read_parquet(paste0("2_product_data/", cpa_or_pf, "2a_product_yr_lvl_dta.parquet"))
+product_data <- read_parquet(paste0("2_product_data/", cpa_or_pf, "/2a_product_yr_lvl_dta.parquet"))
 ipcr_data <- readRDS("4a_ipcr_cumulative.RDS")
+
+patenting_products <- merge(patenting_products, tm_data, by = intersect(names(patenting_products), names(tm_data)), all = FALSE)
 
 subset_firms <- patenting_products[burst == 1 & ever_patent == 1] %>%
   select(firmid, year, new_0, new_1, new_2, new_4, new_6, new_8, burst, NACE_cum, new_NACE, num_pat_families, number_of_products, prod_added) %>%
-  merge(product_data, by = c("firmid", "year"), all.x = T)
+  merge(product_data, by = c("firmid", "year"), all.x = T) 
 length(unique(subset_firms$prodcom))
 
 burst_events_industry_granular <- patenting_products[, .(
@@ -307,7 +309,7 @@ burst_events_industry_granular <- patenting_products[, .(
   patent_leader = sum(num_pat_families * leader, na.rm = TRUE),
   num_tm = sum(num_tm, na.rm = TRUE),
   tm_leader = sum(num_tm * leader, na.rm = TRUE),
-  number_of_products = sum(number_of_products, na.rm = TRUE),
+  number_of_products = sum(number_of_products, na.rm = TRUE), 
   number_of_products_bursting = sum(number_of_products * burst, na.rm = TRUE),
   number_of_products_not_bursting = sum(number_of_products * (1 - burst), na.rm = TRUE),
   prod_added = sum(prod_added, na.rm = TRUE),
