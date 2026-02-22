@@ -302,26 +302,41 @@ subset_firms <- patenting_products[burst == 1 & ever_patent == 1] %>%
   merge(product_data, by = c("firmid", "year"), all.x = T) 
 length(unique(subset_firms$prodcom))
 
-burst_events_industry_granular <- patenting_products[, .(
-  burst_industry = max(burst, na.rm = TRUE),
-  burst_leader = max(burst * leader, na.rm = TRUE),
-  patent_industry = sum(num_pat_families, na.rm = TRUE),
-  patent_leader = sum(num_pat_families * leader, na.rm = TRUE),
-  num_tm = sum(num_tm, na.rm = TRUE),
-  tm_leader = sum(num_tm * leader, na.rm = TRUE),
-  number_of_products = sum(number_of_products, na.rm = TRUE), 
-  number_of_products_bursting = sum(number_of_products * burst, na.rm = TRUE),
-  number_of_products_not_bursting = sum(number_of_products * (1 - burst), na.rm = TRUE),
-  prod_added = sum(prod_added, na.rm = TRUE),
-  prod_added_bursting = sum(prod_added * burst, na.rm = TRUE),
-  prod_added_not_bursting = sum(prod_added * (1 - burst), na.rm = TRUE),
-  prod_destroyed = sum(prod_destr, na.rm = TRUE),
-  prod_destroyed_bursting = sum(prod_destr * burst, na.rm = TRUE),
-  prod_destroyed_not_bursting = sum(prod_destr * (1 - burst), na.rm = TRUE),
-  n_firms = n_distinct(firmid),
-  n_patenting_firms = sum(ever_patent == 1, na.rm = TRUE),
-  n_tm_firms = sum(ever_tm == 1, na.rm = TRUE)
-), by = .(NACE_BR, year)] %>%
+burst_events_industry_granular <- patenting_products[, {
+  sum_var <- function(v) sum(get(v), na.rm = TRUE)
+  sum_w <- function(v, w) sum(get(v) * w, na.rm = TRUE)
+
+  industry_map <- c(
+    patent_industry = "num_pat_families",
+    num_tm = "num_tm",
+    number_of_products = "number_of_products",
+    prod_added = "prod_added",
+    prod_destroyed = "prod_destr"
+  )
+  leader_map <- c(
+    patent_leader = "num_pat_families",
+    tm_leader = "num_tm"
+  )
+  burst_map <- c(
+    number_of_products = "number_of_products",
+    prod_added = "prod_added",
+    prod_destroyed = "prod_destr"
+  )
+
+  c(
+    list(
+      burst_industry = max(burst, na.rm = TRUE),
+      burst_leader = max(burst * leader, na.rm = TRUE),
+      n_firms = uniqueN(firmid),
+      n_patenting_firms = sum(ever_patent == 1, na.rm = TRUE),
+      n_tm_firms = sum(ever_tm == 1, na.rm = TRUE)
+    ),
+    setNames(lapply(industry_map, sum_var), names(industry_map)),
+    setNames(lapply(leader_map, function(v) sum_w(v, leader)), names(leader_map)),
+    setNames(lapply(burst_map, function(v) sum_w(v, burst)), paste0(names(burst_map), "_bursting")),
+    setNames(lapply(burst_map, function(v) sum_w(v, 1 - burst)), paste0(names(burst_map), "_not_bursting"))
+  )
+}, by = .(NACE_BR, year)] %>%
   .[, `:=`(
     product_creation_rate = prod_added / number_of_products,
     product_creation_rate_bursting = prod_added_bursting / number_of_products_bursting,
