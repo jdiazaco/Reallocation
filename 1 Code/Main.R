@@ -80,6 +80,7 @@ source(paste0(tools_dir, "core_switch_product.R"))
 source(paste0(tools_dir, "create_latex_table.R"))
 # source(paste0(tools_dir, "patent_prodcom_contextual_similarity.R"))
 source(paste0(tools_dir, "create_lags.R"))
+source(paste0(tools_dir, "did_imputation.R"))
 source(paste0(tools_dir, "winsorize.R"))
 # source(paste0(tools_dir, "dummy_dataset.R"))
 
@@ -195,6 +196,7 @@ exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
   
   # firm_industry_data <- read_parquet("firm_lists/firmid_NACE_BR_year.parquet")
 
+
   if (grepl("lse|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
   prodcom_sectors <- c("07", "08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
                        "26", "27", "28", "29", "30", "31", "32", "33", "42", "43", "45", "47", "58", "68", "70", 
@@ -207,5 +209,5 @@ exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
   
   
   
-output_dir <- paste0(output_dir, "2026/Export 21.01/")
+output_dir <- paste0(output_dir, "2026/Export 29.01/")
 output_dir_creator(output_dir)

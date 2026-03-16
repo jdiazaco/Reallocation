@@ -59,10 +59,10 @@ for (i in seq_along(levels_agg)) {
     setkey(product_core, firmid, year)
   } else {
     if (nrow(product_core) != nrow(data)) stop("Mismatch in row count across aggregation levels.")
-    setkey(product_core, firmid, year)
-    setkey(data, firmid, year)
-    product_core <- data[product_core]
-    
+    # setkey(product_core, firmid, year)
+    # setkey(data, firmid, year)
+    # product_core <- data[product_core]
+    product_core <- merge(product_core, data, by = c("firmid", "year"), all.x = TRUE, all.y=TRUE)
   }
 }
 

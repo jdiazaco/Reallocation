@@ -6,7 +6,7 @@ source(paste0(dirname(dirname(rstudioapi::getActiveDocumentContext()$path)), "/M
 # which underwent additional cleaning to ensure panel without breaks 
 
 start = 1994
-end = 2022
+end = 2023
 filter_min_n_employees <- 1
 # raw_dir<-raw_dir_public
 
@@ -148,8 +148,8 @@ if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path)))
   hist(firm_yr_lvl_br_dta$legal_birth_year, breaks = 121)
   
   {
-    firm_yr_lvl_br_dta <- read_csv("ficusfare_profil_wof_19942019_v0222.csv")
-    test <- fread("1_temp.csv")
+    # firm_yr_lvl_br_dta <- read_csv("ficusfare_profil_wof_19942019_v0222.csv")
+    # test <- fread("1_temp.csv")
     
   }
   
@@ -227,9 +227,35 @@ firm_yr_lvl_br_dta[, `:=`(
 )]
 
 ## generate employment buckets (I use the divisions present in the ICT data)
-breaks = c(-Inf, 10, 50, 250, Inf)
-categories = c("<10", "10-50", "50-250", "250+")
-firm_yr_lvl_br_dta[, labor_bucket := cut(empl_bar, breaks = breaks, labels = categories, right = F)]
+# breaks = c(-Inf, 10, 50, 250, Inf)
+# categories = c("<10", "10-50", "50-250", "250+")
+# firm_yr_lvl_br_dta[, labor_bucket := cut(empl_bar, breaks = breaks, labels = categories, right = F)]
+
+# Firm age bin
+firm_yr_lvl_br_dta[, age_bin := cut(
+    firm_age,
+    breaks = c(0, 1, 3, 6, 11, 21, Inf),
+    labels = c("0", "1-2", "3-5", "6-10", "11-20", "21+"),
+    include.lowest = TRUE,
+    right = FALSE
+    # ordered_result = TRUE,
+    # ref="21+"
+  )]
+  
+
+
+# Firm size bin
+  firm_yr_lvl_br_dta[, size_bin := cut(
+    empl_bar,
+    breaks = c(1, 5, 10, 20, 50, 100, 250, 500, 1000, Inf),
+    labels = c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+"),
+    include.lowest = TRUE,
+    right = FALSE
+    # ordered_result = TRUE,
+    # ref="1000+"
+  )]
+
+
 
 ## combine employment bucket + sector
 firm_yr_lvl_br_dta[, sector_labor_bucket := ifelse(is.na(empl_bar), NA,

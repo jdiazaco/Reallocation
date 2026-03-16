@@ -26,10 +26,11 @@ selected_names <- c(
   "NACE_BR", "NACE_2d_BR",
   
   # birth_death info
-  "born", "died", "consolidated_birth_year", "economic_death_year",
+  "born", "died", "consolidated_birth_year", "economic_death_year", 
   
   # Employment / inputs
-  "empl", "empl_l", "empl_bar",  "log_empl_bar", "empl_growth",    "empl_reallocation",
+  "empl", "empl_l", "empl_bar",  "log_empl_bar", "empl_growth",   
+  "empl_reallocation", "empl_share", "empl_reallocation_weighted",
   "capital", "capital_bar", "capital_growth",
   "nq", "nq_bar", "nq_growth",   "nq_reallocation",
   "labor_cost", "raw_materials",
@@ -40,6 +41,7 @@ selected_names <- c(
   
   # Firm demographics & age/size buckets
   "young", "firm_age", "log_firm_age",
+  "size_bin", "age_bin", 
   "age_leader", "age_size_bucket", "age_size_quartile", "age_size_decile", 
   "age_size_percentile", "age_size_1000tile", "age_top_4_leaders", "age_top_10_leaders", 
   "leader", "top_4_leaders", "top_10_leaders",
