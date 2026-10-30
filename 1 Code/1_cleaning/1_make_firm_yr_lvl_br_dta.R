@@ -10,7 +10,7 @@ end = 2023
 filter_min_n_employees <- 1
 # raw_dir<-raw_dir_public
 
-if (grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+if (!SYNTHETIC && grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
   firm_yr_lvl_br_dta = setDT(readRDS("sbs_br_combined.rds")) %>%
     rename(
       economic_birth_year = birth_year, economic_death_year = death_year,
@@ -227,9 +227,9 @@ firm_yr_lvl_br_dta[, `:=`(
 )]
 
 ## generate employment buckets (I use the divisions present in the ICT data)
-# breaks = c(-Inf, 10, 50, 250, Inf)
-# categories = c("<10", "10-50", "50-250", "250+")
-# firm_yr_lvl_br_dta[, labor_bucket := cut(empl_bar, breaks = breaks, labels = categories, right = F)]
+breaks = c(-Inf, 10, 50, 250, Inf)
+categories = c("<10", "10-50", "50-250", "250+")
+firm_yr_lvl_br_dta[, labor_bucket := cut(empl_bar, breaks = breaks, labels = categories, right = F)]
 
 # Firm age bin
 firm_yr_lvl_br_dta[, age_bin := cut(
@@ -379,9 +379,9 @@ NACE_BR_data <- firm_yr_lvl_br_dta[, c("firmid", "year", "NACE_BR", "NACE_2d_BR"
 print("The following should be only 1: ")
 table(firm_yr_lvl_br_dta[, .(n=.N), by=.(firmid, year)]$n)
 
-if (!grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
-  
-  
+if (SYNTHETIC || !grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+
+
   # Bring in Alex's linkedin data
   linkedin = read_parquet("linkedin_data/french_affiliated_firm_roles_collapsed_clean.parquet") %>%
     select(-c(rcid, `__index_level_0__`))  %>% setDT(.)%>% setkey(firmid, year)
@@ -392,8 +392,8 @@ if (!grepl("nb|Users/lse", dirname(rstudioapi::getActiveDocumentContext()$path))
   setkey(firm_yr_lvl_br_dta, firmid, year)
   
   # Bring in NUTS information
-  nuts<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv") 
-  nuts_conc<-fread("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/1 Code/Ancillary datasets/NUTS/nuts_conc.csv")
+  nuts<-fread(paste0(external_dir, "1 Code/Ancillary datasets/NUTS/nuts_soe_addition.csv"))
+  nuts_conc<-fread(paste0(external_dir, "1 Code/Ancillary datasets/NUTS/nuts_conc.csv"))
   
   # # Clean it and merge it to product_summary
   nuts[, firmid:=str_pad(as.character(siren), 9, side="left", pad="0")]

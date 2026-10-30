@@ -43,6 +43,8 @@ product_data <- as.data.table(read_parquet(paste0("2_product_data/", cpa_or_pf, 
 patent_data <- as.data.table(read_rds("4b_patenting_products_firm_level.RDS"))
 tm_data <- as.data.table(read_rds("4c_tm_firm_level.rds"))
 industry_data <- as.data.table(read_parquet("5_industry_yr_lvl_dta.parquet")) # %>% select(-c("n_firms_in_industry", "leader_rev_share", "diff_leader_vs_2nd"))
+# Industry firm lists stay in 5_industry: copied to every firm-year they grow quadratically
+industry_data[, intersect(c("top_4_BR", "top_10_BR", "competitors_BR"), names(industry_data)) := NULL]
 
 # Make lists of firms
 firm_list_names <- c("prodcom", "br", "patenting", "tm")

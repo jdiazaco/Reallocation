@@ -46,10 +46,13 @@ end=2022
 
 # 2) Compute lead and lagged values for core metrics  ------------------------------------
 product_data <- read_parquet(paste0("2_product_data/prodfra_plus/2a_product_yr_lvl_dta.parquet")) # Using prodfra_plus because it contains all cpa_or_pf possibilites
-levels_agg <- digits[digits != 0]
+levels_agg <- c(0, 1, 2, 4, 6, 8, 10) # Define aggregation levels (digits)
 product_core <- NULL
+make_core_dataset <- !file.exists("2_product_data/2b_product_core_dta.parquet")
 
-for (i in seq_along(levels_agg)) {
+if (make_core_dataset) {
+  # Create a dataset with core product information for each aggregation level
+  for (i in seq_along(levels_agg)) {
   print(levels_agg[i])
   data <- core_switch_product(product_data, levels_agg[i])
   setkey(data, firmid, year)
@@ -70,6 +73,8 @@ share_cores <- names(product_core)[grepl("^core|^share_core|^share_runup", names
 product_core <- create_lags(product_core, share_cores, id_vars = c("firmid"), time_var = "year")
 
 write_parquet(product_core, paste0("2_product_data/2b_product_core_dta.parquet"))
+
+}
 
 # 3) Create lagged core variables for entry/exit analysis --------------------------------
 
@@ -148,6 +153,12 @@ agg_product_data <- product_data[, lapply(.SD, sum, na.rm=T), .SDcols=vars, by=.
 product_summary_years <- product_data[, lapply(.SD, unique, na.rm=T), .SDcols=unique_vars, by=.(firmid, year)]
 agg_product_data <- merge(agg_product_data, product_summary_years, by = c("firmid", "year"), all.x = T)
 agg_product_data <- agg_product_data %>% .[!(rev==0 & status!="died")]
+
+# Firm-level revenue growth/reallocation (used for the intensive margin in 3.2)
+agg_product_data_temp <- growth_creator(agg_product_data, "rev", 1, create_born_died=T, data_type="survey") %>%
+  select("firmid", "year", names(.)[grepl("rev_", names(.))])
+agg_product_data <- merge(agg_product_data, agg_product_data_temp, by=c("firmid", "year"), all.x=T)
+rm(product_summary_years); gc()
 
 # Rename variables
 setnames(agg_product_data,

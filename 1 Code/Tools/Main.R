@@ -32,6 +32,10 @@ invisible(lapply(packages, library, character.only = TRUE))
 set.seed(123)
 final<-T
 
+# Synthetic mode: run on the CASD-format inputs built by
+# 1_cleaning/dummy_data_code/synthetic_raw_data.R (set the env var before sourcing)
+SYNTHETIC <- isTRUE(as.logical(Sys.getenv("REALLOCATION_SYNTHETIC", "FALSE")))
+
 if (grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
   main_dir <- "G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/"
 } else {
@@ -41,6 +45,7 @@ if (grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$pa
     main_dir <- "~/Reallocation/7 New infrastructure/"
   }
 }
+if (SYNTHETIC) main_dir <- Sys.getenv("REALLOCATION_SYNTHETIC_DIR", "C:/Users/nb/Documents/Reallocation_synthetic/")
 
   code_dir <<- case_when(
     ## When running locally
@@ -150,7 +155,14 @@ jaccard_reallocation <- function(a, b) {
 # source("C:/Users/Public/1. Microprod/1. Microprod-H2020/NEW_INFRASTRUCTURE/Infra/Rtools/nace_conc.R")
 
 # set up directories 
-raw_dir = "C:/Users/NEWPROD_J_DIAZ-AC/Documents/Raw_data/Data/"
+raw_dir = if (SYNTHETIC) paste0(main_dir, "Raw_data/") else "C:/Users/NEWPROD_J_DIAZ-AC/Documents/Raw_data/Data/"
+# Inputs kept outside 2 Data: product harmonisation tables, NUTS tables, LIFI
+external_dir <- if (SYNTHETIC) paste0(main_dir, "external/") else "C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/"
+lifi_path <- case_when(
+  SYNTHETIC ~ paste0(main_dir, "external/LIFI.rds"),
+  grepl("My Drive|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path)) ~ "G:/My Drive/IWH/PhD/Reallocation/GitHub Infrastructure/2 Data/LIFI.rds",
+  T ~ "C:/Users/Public/1. Microprod/0. Raw data processing/Codes/Preparation_LIFI/LIFI.rds"
+)
 setwd(paste0(main_dir, '2 Data/'))
 output_dir<-paste0(main_dir, "3 Output/")
 
@@ -197,7 +209,7 @@ exit_digit <- agg_levels[[cpa_or_pf]]$exit_digit
   # firm_industry_data <- read_parquet("firm_lists/firmid_NACE_BR_year.parquet")
 
 
-  if (grepl("lse|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
+  if (SYNTHETIC || grepl("lse|Users/nb", dirname(rstudioapi::getActiveDocumentContext()$path))) {
   prodcom_sectors <- c("07", "08", "10", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", 
                        "26", "27", "28", "29", "30", "31", "32", "33", "42", "43", "45", "47", "58", "68", "70", 
                        "71", "72", "73", "77", "82", "95", "96")

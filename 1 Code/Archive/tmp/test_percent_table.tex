@@ -1,0 +1,31 @@
+\documentclass{article}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage[margin=1in]{geometry}
+\usepackage{caption}
+\usepackage{multirow}
+\usepackage[table]{xcolor}
+
+\begin{document}
+
+\begin{table}[H]
+\centering
+\caption{Test}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{clrr|r}
+\toprule
+ &  & \multicolumn{3}{c}{Top label} \\
+\midrule
+ & Group & X & Y & Mean \\
+\midrule
+ & A & \cellcolor[HTML]{FF4444}1.0000\% & \cellcolor[HTML]{FF4444}40.0000\% & \cellcolor[HTML]{FFFFFF}20.5000\% \\
+\multirow{1}{*}{\rotatebox[origin=c]{90}{Side label}} & B & \cellcolor[HTML]{44BB44}25.0000\% & \cellcolor[HTML]{44BB44}60.0000\% & \cellcolor[HTML]{1F78B4}42.5000\% \\
+\midrule
+ & Mean & \cellcolor[HTML]{FFFFFF}13.0000\% & \cellcolor[HTML]{1F78B4}50.0000\% &  \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+\end{document}
+

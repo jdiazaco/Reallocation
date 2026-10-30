@@ -31,6 +31,13 @@ conversion_windows <- c(0, 2, 3, 5) # years: baseline=2, robustness=3,5
 burst_threshold <- 5
 burst_thresholds <- c(2, 5, 10)
 
+# --- Export / Render Mode ----------------------------------------------------
+# EXPORT_MODE = TRUE : run analysis on server, save plot data as CSVs (no plots/LaTeX)
+# EXPORT_MODE = FALSE: load CSVs locally, generate plots and LaTeX (no heavy computation)
+EXPORT_MODE     <- TRUE
+results_csv_dir <- file.path(output_dir, "csv_results")
+dir.create(results_csv_dir, showWarnings = FALSE, recursive = TRUE)
+
 # --- Variable Construction ---------------------------------------------------
 # Product burst indicator
 patenting_products[, product_burst := as.integer(prod_added >= burst_threshold)]
@@ -134,27 +141,29 @@ conversion_rates_vars <- list(
 
 # Descriptive statistics
 for (i in seq_along(conversion_rates_vars)) {
-  var <- conversion_rates_vars[[i]]
+  var   <- conversion_rates_vars[[i]]
+  label <- names(conversion_rates_vars)[i]
+  csv_path <- file.path(results_csv_dir, paste0("desc_", label, ".csv"))
 
-  conv_by_size <- patenting_products[, .(mean_conv = mean(get(var), na.rm = TRUE)),
-    by = c("size_bin", "age_bin")
-  ]
-  setorder(conv_by_size, size_bin, age_bin)
-
-  conv_by_size <- conv_by_size %>%
-    pivot_wider(names_from = all_of("size_bin"), values_from = mean_conv) %>%
-    # select(-`NA`) %>%
-    filter(!is.na(.data[["age_bin"]]))
-
-  create_latex_table(
-    data = conv_by_size,
-    var_name = names(conversion_rates_vars)[i],
-    caption = paste0("Variables by Size Bin and Age Bin - ", names(conversion_rates_vars)[i]),
-    output_dir = output_dir,
-    include_preamble = FALSE,
-    digits = 4,
-    filename = paste0("test_", names(conversion_rates_vars)[i])
-  )
+  if (EXPORT_MODE) {
+    conv_by_size <- patenting_products[, .(mean_conv = mean(get(var), na.rm = TRUE)),
+      by = c("size_bin", "age_bin")
+    ]
+    setorder(conv_by_size, size_bin, age_bin)
+    conv_by_size <- conv_by_size %>%
+      pivot_wider(names_from = all_of("size_bin"), values_from = mean_conv) %>%
+      # select(-`NA`) %>%
+      filter(!is.na(.data[["age_bin"]]))
+    fwrite(conv_by_size, csv_path)
+  } else {
+    conv_by_size <- fread(csv_path)
+    create_latex_table(
+      data = conv_by_size, var_name = label,
+      caption = paste0("Variables by Size Bin and Age Bin - ", label),
+      output_dir = output_dir, include_preamble = FALSE, digits = 4,
+      filename = paste0("test_", label)
+    )
+  }
 }
 
 # --- 2. Effects of conversion (and other variables) on growth by age and size --------------------------------
@@ -291,78 +300,81 @@ save_plot <- function(p, path, width = 8, height = 6) {
 output_dir_og <- output_dir
 fixed_effects <- c("NACE_BR + year", "NACE_BR^year", "firmid + year", "")
 
+if (EXPORT_MODE) {
+  all_desc_rows <- list(); all_main_rows <- list()
+} else {
+  desc_slopes  <- fread(file.path(results_csv_dir, "desc_slopes.csv"))
+  main_results <- fread(file.path(results_csv_dir, "main_results.csv"))
+}
+
 # --- Main analysis loop ------------------------------------------------------
 for (x_name in names(x_vars)) {
   message(x_name)
   x_var <- x_vars[[x_name]]
 
-  dat <- copy(patenting_products_og)
+  output_dir <- file.path(output_dir_og, x_name)
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Assign sunab treatment time: first year with positive x_var (never-treated → 10000)
-  first_treat <- dat[get(x_var) > 0, .(event_time = min(year)), by = firmid]
-  dat <- merge(dat, first_treat, by = "firmid", all.x = TRUE, sort = FALSE)
-  dat[is.na(event_time), event_time := 10000]
-  dat <- dat[!is.na(get(x_var))]
-  
-names(dat)
-dat$num_pat_families
+  if (EXPORT_MODE) {
+    dat <- copy(patenting_products_og)
 
-  w_name     <- "nq_bar"
-  weight_vec <- dat[[w_name]]
+    # Assign sunab treatment time: first year with positive x_var (never-treated → 10000)
+    first_treat <- dat[get(x_var) > 0, .(event_time = min(year)), by = firmid]
+    dat <- merge(dat, first_treat, by = "firmid", all.x = TRUE, sort = FALSE)
+    dat[is.na(event_time), event_time := 10000]
+    dat <- dat[!is.na(get(x_var))]
 
-      # Interaction models: y ~ x * (size | age | size*age)
-      fml_rhs <- function(rhs) as.formula(paste0(x_var, " ~ ", rhs))
-      model_size     <- lm(fml_rhs("size_bin"),           data = dat, weights = weight_vec)
-      model_age      <- lm(fml_rhs("age_bin"),            data = dat, weights = weight_vec)
-      model_size_age <- lm(fml_rhs("size_bin * age_bin"), data = dat, weights = weight_vec)
+    w_name     <- "nq_bar"
+    weight_vec <- dat[[w_name]]
 
-      slopes_size <- get_slopes(model_size, "size_bin", "^size_bin")
-      slopes_age  <- get_slopes(model_age,  "age_bin",  "^age_bin")
+    # Descriptive: x ~ size/age (no outcome, lm)
+    fml_rhs <- function(rhs) as.formula(paste0(x_var, " ~ ", rhs))
+    model_size     <- lm(fml_rhs("size_bin"),           data = dat, weights = weight_vec)
+    model_age      <- lm(fml_rhs("age_bin"),            data = dat, weights = weight_vec)
+    model_size_age <- lm(fml_rhs("size_bin * age_bin"), data = dat, weights = weight_vec)
 
-      slopes_size_age <- get_slopes(model_size_age, by = c("size_bin", "age_bin"), pattern = "size_bin[^:]*:age_bin[^:]*")
-      vcov_size_age   <- vcov(model_size_age)
-      slopes_idx      <- slopes_size_age %>% mutate(.row_idx = row_number())
+    slopes_size     <- get_slopes(model_size, "size_bin", "^size_bin")
+    slopes_age      <- get_slopes(model_age,  "age_bin",  "^age_bin")
+    slopes_size_age <- get_slopes(model_size_age, by = c("size_bin", "age_bin"), pattern = "size_bin[^:]*:age_bin[^:]*")
+    vcov_size_age   <- vcov(model_size_age)
+    slopes_idx      <- slopes_size_age %>% mutate(.row_idx = row_number())
 
-      # Marginal weights
-      age_weights  <- dat[, .(w_age  = sum(get(w_name), na.rm = TRUE)), by = age_bin]  %>% mutate(w_age  = w_age  / sum(w_age))
-      size_weights <- dat[, .(w_size = sum(get(w_name), na.rm = TRUE)), by = size_bin] %>% mutate(w_size = w_size / sum(w_size))
+    # Marginal weights
+    age_weights  <- dat[, .(w_age  = sum(get(w_name), na.rm = TRUE)), by = age_bin]  %>% mutate(w_age  = w_age  / sum(w_age))
+    size_weights <- dat[, .(w_size = sum(get(w_name), na.rm = TRUE)), by = size_bin] %>% mutate(w_size = w_size / sum(w_size))
 
-      # Vcov-corrected SEs: sqrt(w' Σ w)
-      vcov_se_size <- vcov_weighted_se(slopes_idx, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_size_age) %>% rename(se_size_age_control_vcov = se_vcov)
-      vcov_se_age  <- vcov_weighted_se(slopes_idx, size_weights, "w_size", "size_bin", "age_bin",  vcov_size_age) %>% rename(se_age_size_control_vcov  = se_vcov)
+    # Vcov-corrected SEs: sqrt(w' Σ w)
+    vcov_se_size <- vcov_weighted_se(slopes_idx, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_size_age) %>% rename(se_size_age_control_vcov = se_vcov)
+    vcov_se_age  <- vcov_weighted_se(slopes_idx, size_weights, "w_size", "size_bin", "age_bin",  vcov_size_age) %>% rename(se_age_size_control_vcov  = se_vcov)
 
-      # Weighted-average effects: size controlled for age distribution, and vice versa
-      size_effects <- compute_effects(slopes_size_age, slopes_size, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_se_size, "beta_size_age_control", "size")
-      age_effects  <- compute_effects(slopes_size_age, slopes_age,  size_weights, "w_size", "size_bin", "age_bin",  vcov_se_age,  "beta_age_size_control", "age")
+    # Weighted-average effects: size controlled for age distribution, and vice versa
+    size_effects <- compute_effects(slopes_size_age, slopes_size, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_se_size, "beta_size_age_control", "size")
+    age_effects  <- compute_effects(slopes_size_age, slopes_age,  size_weights, "w_size", "size_bin", "age_bin",  vcov_se_age,  "beta_age_size_control", "age")
 
-      plot_data_size <- make_plot_data(size_effects, "size_bin",
-        c("size", "size_age_control"), c("Direct (size-only)", "Age-weighted")) %>% setDT()
-      plot_data_size[, size_bin := factor(size_bin, levels = c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+"))]
-      setorder(plot_data_size, size_bin)
+    plot_data_size <- make_plot_data(size_effects, "size_bin", c("size", "size_age_control"), c("Direct (size-only)", "Age-weighted")) %>% setDT()
+    plot_data_age  <- make_plot_data(age_effects,  "age_bin",  c("age",  "age_size_control"),  c("Direct (age-only)",  "Size-weighted")) %>% setDT()
 
-      plot_data_age  <- make_plot_data(age_effects,  "age_bin",
-        c("age",  "age_size_control"),  c("Direct (age-only)",  "Size-weighted")) %>% setDT()
-      plot_data_age[, age_bin := factor(age_bin, levels = c("0", "1-2", "3-5", "6-10", "11-20", "21+"))]
-      setorder(plot_data_age, age_bin)
+    plot_data_size[, `:=`(analysis_var = x_name, bin_var = "size_bin")]; setnames(plot_data_size, "size_bin", "bin")
+    plot_data_age[,  `:=`(analysis_var = x_name, bin_var = "age_bin")];  setnames(plot_data_age,  "age_bin",  "bin")
+    all_desc_rows <- c(all_desc_rows, list(plot_data_size, plot_data_age))
 
-    output_dir <- file.path(output_dir_og, paste0(x_name))
-    dir.create(output_dir, showWarnings = FALSE)
-
-      save_plot(
-          bin_plot(plot_data_size, "size_bin", x_name, "By Size", "glm"),
-          file.path(output_dir, paste0(x_name, "_size_bin.png"))
-        )
-      save_plot(
-          bin_plot(plot_data_age, "age_bin", x_name, "By Age", "lm"),
-          file.path(output_dir, paste0(x_name, "_age_bin.png"))
-        )
+  } else {
+    cur_x <- x_name
+    plot_data_size <- desc_slopes[analysis_var == cur_x & bin_var == "size_bin"]; setnames(plot_data_size, "bin", "size_bin")
+    plot_data_age  <- desc_slopes[analysis_var == cur_x & bin_var == "age_bin"];  setnames(plot_data_age,  "bin", "age_bin")
+    plot_data_size[, size_bin := factor(size_bin, levels = c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+"))]
+    setorder(plot_data_size, size_bin)
+    plot_data_age[, age_bin := factor(age_bin, levels = c("0", "1-2", "3-5", "6-10", "11-20", "21+"))]
+    setorder(plot_data_age, age_bin)
+    save_plot(bin_plot(plot_data_size, "size_bin", x_name, "By Size", "glm"), file.path(output_dir, paste0(x_name, "_size_bin.png")))
+    save_plot(bin_plot(plot_data_age,  "age_bin",  x_name, "By Age",  "lm"),  file.path(output_dir, paste0(x_name, "_age_bin.png")))
+  }
 
   for (y_var in y_vars) {
 
+    output_dir <- file.path(output_dir_og, x_name, y_var)
+    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
-    output_dir <- file.path(output_dir_og, paste0(x_name, "/", y_var))
-    dir.create(output_dir, showWarnings = FALSE)
-    
     # Sun & Abraham event study
     # es_model <- feols(
     #   as.formula(paste0(y_var, " ~ sunab(event_time, year, ref.p = -1) | NACE_BR + year")),
@@ -374,80 +386,83 @@ dat$num_pat_families
     #       main = paste0("Event Study: ", y_labels[y_var], " by ", x_name))
     # dev.off()
 
-    w_name     <- y_weights[y_var]
-    weight_vec <- dat[[w_name]]
-    dat        <- lead_lag_creator(dat, y_var, n_lags = event_window, to_dummy = FALSE)
+    if (EXPORT_MODE) {
+      w_name     <- y_weights[y_var]
+      weight_vec <- dat[[w_name]]
+      dat        <- lead_lag_creator(dat, y_var, n_lags = event_window, to_dummy = FALSE)
 
-    results_size <- list()
-    results_age  <- list()
+      results_size <- list()
+      results_age  <- list()
 
-    for (i in -event_window:event_window) {
+      for (i in -event_window:event_window) {
 
-      y_adj <- if (i == 0) y_var else if (i < 0) paste0(y_var, "_lag", abs(i)) else paste0(y_var, "_lead", i)
+        y_adj <- if (i == 0) y_var else if (i < 0) paste0(y_var, "_lag", abs(i)) else paste0(y_var, "_lead", i)
 
-      # Interaction models: y ~ x * (size | age | size*age)
-      fml_rhs <- function(rhs) as.formula(paste0(y_adj, " ~ ", x_var, " * ", rhs, " | NACE_BR + year"))
-      model_size     <- feols(fml_rhs("size_bin"),           data = dat, weights = weight_vec)
-      model_age      <- feols(fml_rhs("age_bin"),            data = dat, weights = weight_vec)
-      model_size_age <- feols(fml_rhs("size_bin * age_bin"), data = dat, weights = weight_vec)
+        # Interaction models: y ~ x * (size | age | size*age)
+        fml_rhs <- function(rhs) as.formula(paste0(y_adj, " ~ ", x_var, " * ", rhs, " | NACE_BR + year"))
+        model_size     <- feols(fml_rhs("size_bin"),           data = dat, weights = weight_vec)
+        model_age      <- feols(fml_rhs("age_bin"),            data = dat, weights = weight_vec)
+        model_size_age <- feols(fml_rhs("size_bin * age_bin"), data = dat, weights = weight_vec)
 
-      # Marginal slopes by cell
-      slopes_size     <- marginaleffects::slopes(model_size,     by = "size_bin",              var = x_var)
-      slopes_age      <- marginaleffects::slopes(model_age,      by = "age_bin",               var = x_var)
-      slopes_size_age <- marginaleffects::slopes(model_size_age, by = c("age_bin", "size_bin"), var = x_var)
-      vcov_size_age   <- vcov(model_size_age)
-      slopes_idx      <- slopes_size_age %>% mutate(.row_idx = row_number())
+        # Marginal slopes by cell
+        slopes_size     <- marginaleffects::slopes(model_size,     by = "size_bin",               var = x_var)
+        slopes_age      <- marginaleffects::slopes(model_age,      by = "age_bin",                var = x_var)
+        slopes_size_age <- marginaleffects::slopes(model_size_age, by = c("age_bin", "size_bin"),  var = x_var)
+        vcov_size_age   <- vcov(model_size_age)
+        slopes_idx      <- slopes_size_age %>% mutate(.row_idx = row_number())
 
-      # Marginal weights
-      age_weights  <- dat[, .(w_age  = sum(get(w_name), na.rm = TRUE)), by = age_bin]  %>% mutate(w_age  = w_age  / sum(w_age))
-      size_weights <- dat[, .(w_size = sum(get(w_name), na.rm = TRUE)), by = size_bin] %>% mutate(w_size = w_size / sum(w_size))
+        # Marginal weights
+        age_weights  <- dat[, .(w_age  = sum(get(w_name), na.rm = TRUE)), by = age_bin]  %>% mutate(w_age  = w_age  / sum(w_age))
+        size_weights <- dat[, .(w_size = sum(get(w_name), na.rm = TRUE)), by = size_bin] %>% mutate(w_size = w_size / sum(w_size))
 
-      # Vcov-corrected SEs: sqrt(w' Σ w)
-      vcov_se_size <- vcov_weighted_se(slopes_idx, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_size_age) %>% rename(se_size_age_control_vcov = se_vcov)
-      vcov_se_age  <- vcov_weighted_se(slopes_idx, size_weights, "w_size", "size_bin", "age_bin",  vcov_size_age) %>% rename(se_age_size_control_vcov  = se_vcov)
+        # Vcov-corrected SEs: sqrt(w' Σ w)
+        vcov_se_size <- vcov_weighted_se(slopes_idx, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_size_age) %>% rename(se_size_age_control_vcov = se_vcov)
+        vcov_se_age  <- vcov_weighted_se(slopes_idx, size_weights, "w_size", "size_bin", "age_bin",  vcov_size_age) %>% rename(se_age_size_control_vcov  = se_vcov)
 
-      # Weighted-average effects: size controlled for age distribution, and vice versa
-      size_effects <- compute_effects(slopes_size_age, slopes_size, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_se_size, "beta_size_age_control", "size")
-      age_effects  <- compute_effects(slopes_size_age, slopes_age,  size_weights, "w_size", "size_bin", "age_bin",  vcov_se_age,  "beta_age_size_control", "age")
+        # Weighted-average effects: size controlled for age distribution, and vice versa
+        size_effects <- compute_effects(slopes_size_age, slopes_size, age_weights,  "w_age",  "age_bin",  "size_bin", vcov_se_size, "beta_size_age_control", "size")
+        age_effects  <- compute_effects(slopes_size_age, slopes_age,  size_weights, "w_size", "size_bin", "age_bin",  vcov_se_age,  "beta_age_size_control", "age")
 
-      plot_data_size <- make_plot_data(size_effects, "size_bin",
-        c("size", "size_age_control"), c("Direct (size-only)", "Age-weighted"))
-      plot_data_age  <- make_plot_data(age_effects,  "age_bin",
-        c("age",  "age_size_control"),  c("Direct (age-only)",  "Size-weighted"))
+        plot_data_size <- make_plot_data(size_effects, "size_bin", c("size", "size_age_control"), c("Direct (size-only)", "Age-weighted"))
+        plot_data_age  <- make_plot_data(age_effects,  "age_bin",  c("age",  "age_size_control"),  c("Direct (age-only)",  "Size-weighted"))
 
-      results_size[[as.character(i)]] <- setDT(plot_data_size)[, time := i]
-      results_age[[as.character(i)]]  <- setDT(plot_data_age)[,  time := i]
-
-      if (i %in% 0:2) {
-        save_plot(
-          bin_plot(plot_data_size, "size_bin", x_name, y_labels[y_var], "glm", i),
-          file.path(output_dir, paste0("effect_", x_name, "_", y_var, "_size_bin_", i, ".png"))
-        )
-        save_plot(
-          bin_plot(plot_data_age, "age_bin", x_name, y_labels[y_var], "lm", i),
-          file.path(output_dir, paste0("effect_", x_name, "_", y_var, "_age_bin_", i, ".png"))
-        )
+        results_size[[as.character(i)]] <- setDT(plot_data_size)[, time := i]
+        results_age[[as.character(i)]]  <- setDT(plot_data_age)[,  time := i]
       }
+
+      rs <- rbindlist(results_size)[, `:=`(analysis_var = x_name, y_outcome = y_var, bin_var = "size_bin")]; setnames(rs, "size_bin", "bin")
+      ra <- rbindlist(results_age)[,  `:=`(analysis_var = x_name, y_outcome = y_var, bin_var = "age_bin")];  setnames(ra, "age_bin",  "bin")
+      all_main_rows <- c(all_main_rows, list(rs, ra))
+
+    } else {
+      cur_x <- x_name; cur_y <- y_var
+      results_size <- main_results[analysis_var == cur_x & y_outcome == cur_y & bin_var == "size_bin"]; setnames(results_size, "bin", "size_bin")
+      results_age  <- main_results[analysis_var == cur_x & y_outcome == cur_y & bin_var == "age_bin"];  setnames(results_age,  "bin", "age_bin")
+      size_lvls <- c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+")
+      age_lvls  <- c("0", "1-2", "3-5", "6-10", "11-20", "21+")
+
+      for (i in 0:2) {
+        pd_s <- results_size[time == i][, size_bin := factor(size_bin, levels = size_lvls)]
+        pd_a <- results_age[time == i][,  age_bin  := factor(age_bin,  levels = age_lvls)]
+        save_plot(bin_plot(pd_s, "size_bin", x_name, y_labels[y_var], "glm", i),
+                  file.path(output_dir, paste0("effect_", x_name, "_", y_var, "_size_bin_", i, ".png")))
+        save_plot(bin_plot(pd_a, "age_bin",  x_name, y_labels[y_var], "lm",  i),
+                  file.path(output_dir, paste0("effect_", x_name, "_", y_var, "_age_bin_",  i, ".png")))
+      }
+
+      # Over-time panels
+      results_age_dt  <- setDT(copy(results_age));  results_age_dt[,  age_bin  := factor(age_bin,  levels = age_lvls)];  setorder(results_age_dt,  age_bin)
+      results_size_dt <- setDT(copy(results_size)); results_size_dt[, size_bin := factor(size_bin, levels = size_lvls)]
+      save_plot(over_time_plot(results_age_dt,  "age_bin",  x_name, y_labels[y_var]),
+                file.path(output_dir, paste0("effect_over_time_", x_name, "_", y_var, "_age_bin.png")))
+      save_plot(over_time_plot(results_size_dt, "size_bin", x_name, y_labels[y_var]),
+                file.path(output_dir, paste0("effect_over_time_", x_name, "_", y_var, "_size_bin.png")))
     }
-
-    stop("Check plots for time points 0, 1, 2 before generating over-time panels")
-
-    # Over-time panels
-    results_age <- rbindlist(results_age)
-    results_age[, age_bin := factor(age_bin, levels = c("0", "1-2", "3-5", "6-10", "11-20", "21+"))]
-    setorder(results_age, age_bin)
-    save_plot(
-      over_time_plot(results_age, "age_bin", x_name, y_labels[y_var]),
-      file.path(output_dir, paste0("effect_over_time_", x_name, "_", y_var, "_age_bin.png"))
-    )
-
-    results_size <- rbindlist(results_size)
-    results_size[, size_bin := factor(size_bin, levels = c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+"))]
-    save_plot(
-      over_time_plot(results_size, "size_bin", x_name, y_labels[y_var]),
-      file.path(output_dir, paste0("effect_over_time_", x_name, "_", y_var, "_size_bin.png"))
-    )
   }
+}
+if (EXPORT_MODE) {
+  fwrite(rbindlist(all_desc_rows), file.path(results_csv_dir, "desc_slopes.csv"))
+  fwrite(rbindlist(all_main_rows), file.path(results_csv_dir, "main_results.csv"))
 }
 # --- 3. Industry dynamics --------------------------------------
 
@@ -670,3 +685,77 @@ if ("age_bin" %in% names(patenting_products)) {
 }
 
 # Document each step and adjust code to match actual variable names and data structure as needed.
+
+# --- 9. Product Burst Characterization: Innovation Indicators ----------------
+# Forward-looking setup: innovation at t by future product outcomes in t:(t+h).
+
+innov_vars <- c("pat_families_dummy", "num_pat_families", "tm_dummy", "num_tm")
+burst_horizons <- c(0, 2, 3, 5)
+
+for (h in burst_horizons) {
+  burst_var_h <- paste0("future_burst_cat_h", h)
+  future_burst_var <- paste0("future_prod_burst", h)
+  future_prod_var <- paste0("future_products_", h)
+
+  patenting_products[, (burst_var_h) := factor(fcase(
+    is.na(get(future_burst_var)) | is.na(get(future_prod_var)), NA_character_,
+    get(future_burst_var) > 0, "burst",
+    get(future_prod_var) > 0, "nonburst_adder",
+    default = "zero_adder"
+  ), levels = c("zero_adder", "nonburst_adder", "burst"))]
+}
+
+run_burst_comparisons <- function(bin_var, h) {
+  burst_var_h <- paste0("future_burst_cat_h", h)
+
+  rbindlist(lapply(setNames(innov_vars, innov_vars), \(v) {
+    m <- feols(
+      as.formula(paste0(v, " ~ ", burst_var_h, " * ", bin_var, " | firmid + year")),
+      data = patenting_products,
+      cluster = ~firmid
+    )
+
+    as.data.table(
+      marginaleffects::avg_comparisons(
+        m,
+        variables = setNames(list("pairwise"), burst_var_h),
+        by = bin_var
+      )
+    )[, `:=`(innov_var = v, horizon = h)]
+  }))
+}
+
+plot_burst_comparisons <- function(dt, bin_var, bin_levels) {
+  dt[, (bin_var) := factor(get(bin_var), levels = bin_levels)]
+  dt[, horizon_label := factor(paste0("h=", horizon), levels = horizon_levels)]
+
+  ggplot(dt, aes(x = get(bin_var), y = estimate, color = contrast,
+                 ymin = conf.low, ymax = conf.high, group = contrast)) +
+    geom_pointrange(position = position_dodge(0.5), size = 0.35) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    facet_grid(innov_var ~ horizon_label, scales = "free_y") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+    labs(x = bin_var, y = "Avg. difference", color = NULL)
+}
+
+size_levels <- c("1-4", "5-9", "10-19", "20-49", "50-99", "100-249", "250-499", "500-999", "1000+")
+age_levels  <- c("0", "1-2", "3-5", "6-10", "11-20", "21+")
+horizon_levels <- paste0("h=", burst_horizons)
+
+if (EXPORT_MODE) {
+  results_burst_size <- rbindlist(lapply(burst_horizons, \(h) run_burst_comparisons("size_bin", h)))
+  results_burst_age  <- rbindlist(lapply(burst_horizons, \(h) run_burst_comparisons("age_bin", h)))
+  fwrite(results_burst_size, file.path(results_csv_dir, "burst_size.csv"))
+  fwrite(results_burst_age,  file.path(results_csv_dir, "burst_age.csv"))
+} else {
+  results_burst_size <- fread(file.path(results_csv_dir, "burst_size.csv"))
+  results_burst_age  <- fread(file.path(results_csv_dir, "burst_age.csv"))
+
+  p_burst_size <- plot_burst_comparisons(results_burst_size, "size_bin", size_levels)
+  p_burst_age  <- plot_burst_comparisons(results_burst_age,  "age_bin",  age_levels)
+
+  dir.create(file.path(output_dir_og, "burst_characterization"), showWarnings = FALSE)
+  save_plot(p_burst_size, file.path(output_dir_og, "burst_characterization", "innov_by_future_burst_cat_size.png"), width = 16, height = 10)
+  save_plot(p_burst_age,  file.path(output_dir_og, "burst_characterization", "innov_by_future_burst_cat_age.png"),  width = 16, height = 10)
+}

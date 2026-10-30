@@ -14,7 +14,7 @@ only_prodfra_in_prodcom<-FALSE
 parameters(prodfra_or_pcc8, only_prodfra_in_prodcom)
 
 ## import supplementary data
-harmonized_prodfra = fread(paste0("C:/Users/NEWPROD_J_DIAZ-AC/Documents/Reallocation/6 Publish/2 Data/product_harmonization_output/harmonized codes/prodfra_harmonized_2009to2023_", prodfra_or_pcc8, ".csv"))
+harmonized_prodfra = fread(paste0(external_dir, "2 Data/product_harmonization_output/harmonized codes/prodfra_harmonized_2009to2023_", prodfra_or_pcc8, ".csv"))
 active_firm_list = read_parquet("firm_lists/active_firm_list.parquet")
 birth_death = read_parquet("firm_lists/firm_birth_death.parquet")
 NACE_BR_data <- read_parquet("Ancillary datasets/NACE_BR_data.parquet")
@@ -36,7 +36,7 @@ product_data = rbindlist(lapply(c(start:end),function(yr){
   print(yr)
   # import product data 
   # filepath = paste0(raw_dir,'prodcom/prodcom',yr,'.csv')
-  filepath = paste0('C:/Users/NEWPROD_J_DIAZ-AC/Documents/Raw_data/Data/prodcom/new_2025/eap',yr, '_pp.csv')
+  filepath = paste0(raw_dir, 'prodcom/new_2025/eap', yr, '_pp.csv')
   dta_temp = fread(filepath)
   dta_temp[, firmid := as.character(firmid)]
   dta_temp[, pcc8 := as.character(pcc8)]

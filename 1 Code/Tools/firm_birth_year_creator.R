@@ -11,7 +11,7 @@ It looks for different cases on how the birth year can be enconded in Start_Ent
 
 After doing that, it selects the most likely firm_birth_year based on the number of times it is listed as the year indicated in Start_Ent
 
-Author: Juli·n DÌaz-Acosta
+Author: Juli√°n D√≠az-Acosta
 Last update: 29/08/2024
 "
 
